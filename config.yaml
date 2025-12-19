@@ -1,0 +1,11 @@
+app:
+  http_port: 9000
+  upstream: http://localhost:8080
+kubernetes:
+  in_cluster: true
+  namespace: ""
+  leader_election:
+    enabled: true
+    lease_duration: 15s
+    renew_deadline: 10s
+    retry_period: 2s

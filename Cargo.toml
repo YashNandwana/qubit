@@ -1,0 +1,27 @@
+[package]
+name = "Qubit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1.0.145"
+
+log = "0.4"
+env_logger = "0.10"
+
+# Allow latest Tokio 1.x instead of pinning to 1.0.x
+tokio = { version = "1", features = ["full"] }
+
+# kube usually wants these features when writing controllers/clients
+kube = { version = "2.0.1", features = ["runtime", "derive"] }
+
+axum = "0.8.6"
+
+k8s-openapi = { version = "0.26.0", features = ["v1_30"] }
+futures = "0.3.31"
+tracing = "0.1.41"
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+aya = "0.13.1"
