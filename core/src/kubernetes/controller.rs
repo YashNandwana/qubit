@@ -23,8 +23,8 @@ pub struct Controller {
 
 impl Controller {
     pub fn new(config: Arc<QubitConfig>, namespace: Option<String>) -> Self {
-        let service_informer = Self::get_informer_arc(config.clone(), Service);
-        let config_map_informer = Self::get_informer_arc(config.clone(), ConfigMap);
+        let service_informer = Self::get_informer(config.clone(), Service);
+        let config_map_informer = Self::get_informer(config.clone(), ConfigMap);
         
         Self {
             config,
@@ -118,7 +118,9 @@ impl Controller {
         Ok(())
     }
 
-    fn get_informer_arc(cfg: Arc<QubitConfig>, resource: InformerType) -> Arc<dyn Informer + Send + Sync> {
+    fn get_informer(
+        cfg: Arc<QubitConfig>,
+        resource: InformerType) -> Arc<dyn Informer + Send + Sync> {
         match resource {
             InformerType::Service => {
                 let service_box = informer_service_factory(cfg.clone(),resource);

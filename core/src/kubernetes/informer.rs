@@ -27,8 +27,7 @@ impl InformerService {
 
 pub fn informer_service_factory(
     config: Arc<QubitConfig>,
-    resource: InformerType,
-) -> Box<dyn Informer + Send + Sync> {
+    resource: InformerType) -> Box<dyn Informer + Send + Sync> {
     match resource {
         InformerType::Service => {
             Box::new(crate::kubernetes::service_informer::ServiceInformer::new(config, resource))

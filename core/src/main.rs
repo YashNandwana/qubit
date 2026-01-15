@@ -18,14 +18,13 @@ async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
-
+    
     let config: Arc<config::QubitConfig> = init_config();
     info!("Config loaded: {:?}", config);
 
     // spawn server as async task
     let server_cfg = config.clone();
     let mut server_handle = tokio::spawn(async move {
-        // adapt new_http_server to return an object with async serve().await
         let server: HttpServer = HttpServer::new(server_cfg);
         server.do_serve().await;
     });

@@ -27,7 +27,7 @@ impl HttpServer {
         let addr: SocketAddr = format!("{}:{}", self.app_host, self.app_port)
             .parse()
             .expect("invalid listen addr");
-
+        
         info!("Starting HTTP server on {}", addr);
         let app = self.register();
 
