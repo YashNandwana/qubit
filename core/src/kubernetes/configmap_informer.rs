@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use crate::config::QubitConfig;
 use super::informer::Informer;
 use super::informer::InformerType;

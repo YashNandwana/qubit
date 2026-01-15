@@ -1,35 +1,42 @@
-use std::fmt::format;
-use reqwest::{Client, header};
+use reqwest::Client;
 use std::sync::Arc;
-use ebpf_common::DnsQueryEvent;
-use serde_json::json;
-
+use std::time::Duration;
 
 use crate::config::EbpfLoaderConfig;
+use crate::model::EbpfNetworkEvent;
 
 pub struct QubitAggregator {
-    config:             Arc<EbpfLoaderConfig>,
-    qubit_core_client:  Client,
+    config: Arc<EbpfLoaderConfig>,
+    qubit_core_client: Client,
 }
 
 impl QubitAggregator {
-    fn new(config: Arc<>) -> Self {
-        let client = Client::new();
+    pub fn new(config: Arc<EbpfLoaderConfig>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
         Self {
             config,
             qubit_core_client: client,
         }
     }
 
-    pub async fn record_ebpf_event(&self, dns_event: DnsQueryEvent) -> Result<(), reqwest::Error> {
-        let addr = format!("{}:{}", self.config.qubit_core.host, self.config.qubit_core.port);
-        let response = self.qubit_core_client
-            .post(addr)
-            .header(header::AUTHORIZATION, "Bearer my-secret-token")
-            .header(header::CONTENT_TYPE, "application/json")
-            .json(json!(dns_event))
+    pub async fn record_ebpf_event(
+        &self,
+        ebpf_event: EbpfNetworkEvent,
+    ) -> Result<(), reqwest::Error> {
+        let addr = format!(
+            "http://{}:{}/aggregate/ebpf/network",
+            self.config.qubit_core.host, self.config.qubit_core.port
+        );
+
+        self.qubit_core_client
+            .post(&addr)
+            .json(&ebpf_event)
             .send()
-            .await()?;
+            .await?;
+
+        Ok(())
     }
-    
 }

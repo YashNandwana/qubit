@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     curl \
     git \
+    # OpenSSL for reqwest/TLS
+    libssl-dev \
+    ca-certificates \
     # eBPF/BPF dependencies
     linux-headers-generic \
     libbpf-dev \

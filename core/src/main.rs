@@ -1,16 +1,16 @@
-use std::ptr::null;
 use std::sync::Arc;
-use axum::serve;
-use serde::de::Unexpected::Option;
 use tokio::signal;
 use tracing::info;
 
+mod aggregator;
 mod config;
-mod server;
 mod kubernetes;
+mod model;
+mod server;
 
 use crate::config::init_config;
-use crate::kubernetes::controller::Controller; // or K8sController
+use crate::kubernetes::controller::Controller;
+use crate::server::HttpServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,12 +26,8 @@ async fn main() -> anyhow::Result<()> {
     let server_cfg = config.clone();
     let mut server_handle = tokio::spawn(async move {
         // adapt new_http_server to return an object with async serve().await
-        let server: Box<dyn server::Server> = server::new_http_server(server_cfg);
-        if let Err(e) = server.do_serve().await {
-            log::error!("server error: {:?}", e);
-            panic!("error while starting server: {:?}", e);
-        }
-
+        let server: HttpServer = HttpServer::new(server_cfg);
+        server.do_serve().await;
     });
 
     // spawn controller as async task
@@ -42,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
             log::error!("controller error: {}", e);
         }
     });
-    
+
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("shutdown signal received");

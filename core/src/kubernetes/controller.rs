@@ -23,14 +23,9 @@ pub struct Controller {
 
 impl Controller {
     pub fn new(config: Arc<QubitConfig>, namespace: Option<String>) -> Self {
-        let service_informer = Self::get_informer_arc(
-                                                                config.clone(),
-                                                                Service
-        );
-        let config_map_informer = Self::get_informer_arc(
-                                                                    config.clone(),
-                                                                    ConfigMap
-        );
+        let service_informer = Self::get_informer_arc(config.clone(), Service);
+        let config_map_informer = Self::get_informer_arc(config.clone(), ConfigMap);
+        
         Self {
             config,
             namespace,
@@ -39,7 +34,7 @@ impl Controller {
         }
     }
 
-    pub async fn start_informers(&self) -> Result<(), Err()> {
+    pub async fn start_informers(&self) -> Result<(), String> {
         let kube_cfg = match Config::incluster() {
             Ok(cfg) => cfg,
             Err(_) => {
@@ -88,7 +83,6 @@ impl Controller {
                         configmap_informer.process_delete_event();
                     }
                     Err(e) => {
-                        // watcher error — decide whether to continue or return Err to stop task
                         return Err(format!("configmap watcher error: {}", e));
                     }
                     _ => {}
@@ -127,18 +121,12 @@ impl Controller {
     fn get_informer_arc(cfg: Arc<QubitConfig>, resource: InformerType) -> Arc<dyn Informer + Send + Sync> {
         match resource {
             InformerType::Service => {
-                let service_box = informer_service_factory(
-                                                                                    cfg.clone(),
-                                                                                    resource
-                );
+                let service_box = informer_service_factory(cfg.clone(),resource);
                 let service_informer: Arc<dyn Informer + Send + Sync> = Arc::from(service_box);
                 service_informer
             },
             InformerType::ConfigMap => {
-                let config_map_box = informer_service_factory(
-                    cfg.clone(),
-                    resource
-                );
+                let config_map_box = informer_service_factory(cfg.clone(),resource);
                 let config_map_informer: Arc<dyn Informer + Send + Sync> = Arc::from(config_map_box);
                 config_map_informer
             }

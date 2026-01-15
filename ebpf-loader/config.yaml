@@ -1,5 +1,5 @@
 qubit_core:
-  host: "localhost"
-  port: 8080
+  host: "host.docker.internal"
+  port: 9000
 
 perf_array_name: "NETWORK_EVENTS"

@@ -1,36 +1,29 @@
-use axum::{routing::get, Router, Json};
-use serde_json::{json, Value};
+use crate::config::QubitConfig;
+use crate::server::handler;
+use anyhow::Result;
+use axum::routing::post;
+use axum::{Router, routing::get};
 use log::info;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use async_trait::async_trait;
-use anyhow::Result;
-use crate::config::QubitConfig;
-
-#[async_trait]
-pub trait Server: Send + Sync {
-    async fn do_serve(&self) -> Result<()>;
-    fn register(&self) -> Router;
-}
 
 #[allow(unused)]
 pub struct HttpServer {
     app_port: u16,
     app_host: String,
-    config:   Arc<QubitConfig>,
+    config: Arc<QubitConfig>,
 }
 
-pub fn new_http_server(cfg: Arc<QubitConfig>) -> Box<dyn Server + Send + Sync> {
-    Box::new(HttpServer {
-        app_host: String::from("127.0.0.1"),
-        app_port: cfg.app.http_port,
-        config:   cfg,
-    })
-}
+impl HttpServer {
+    pub fn new(config: Arc<QubitConfig>) -> Self {
+        Self {
+            app_host: String::from("127.0.0.1"),
+            app_port: config.app.http_port,
+            config,
+        }
+    }
 
-#[async_trait]
-impl Server for HttpServer {
-    async fn do_serve(&self) -> Result<()> {
+    pub async fn do_serve(&self) -> Result<()> {
         let addr: SocketAddr = format!("{}:{}", self.app_host, self.app_port)
             .parse()
             .expect("invalid listen addr");
@@ -40,15 +33,19 @@ impl Server for HttpServer {
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app.into_make_service()).await?;
-        
+
         Ok(())
     }
 
     fn register(&self) -> Router {
-        Router::new().route("/ping", get(health))
-    }
-}
+        let state = handler::AppState::new(self.config.clone());
 
-async fn health() -> Json<Value> {
-    Json(json!({ "status": "pong" }))
+        Router::new()
+            .route("/ping", get(handler::health))
+            .route(
+                "/aggregate/ebpf/network",
+                post(handler::aggregate_ebpf_network),
+            )
+            .with_state(state)
+    }
 }
