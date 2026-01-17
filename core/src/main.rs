@@ -7,10 +7,11 @@ mod config;
 mod kubernetes;
 mod model;
 mod server;
+mod service;
 
 use crate::config::init_config;
-use crate::kubernetes::controller::Controller;
 use crate::server::HttpServer;
+use crate::service::{K8sService, K8sServiceImpl};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
-    
+
     let config: Arc<config::QubitConfig> = init_config();
     info!("Config loaded: {:?}", config);
 
@@ -29,12 +30,11 @@ async fn main() -> anyhow::Result<()> {
         server.do_serve().await;
     });
 
-    // spawn controller as async task
-    let ctrl_cfg = config.clone();
-    let mut controller_handle = tokio::spawn(async move {
-        let ctrl = Controller::new(ctrl_cfg, None);
-        if let Err(e) = ctrl.start_informers().await {
-            log::error!("controller error: {}", e);
+    // spawn informers as async task
+    let k8s_service = K8sServiceImpl::new(config.clone());
+    let mut k8s_handle = tokio::spawn(async move {
+        if let Err(e) = k8s_service.informer_service().await {
+            log::error!("K8s service failed: {}", e);
         }
     });
 
@@ -45,14 +45,13 @@ async fn main() -> anyhow::Result<()> {
         res = &mut server_handle => {
             info!("server task finished: {:?}", res);
         }
-        res = &mut controller_handle => {
-            info!("controller task finished: {:?}", res);
+        res = &mut k8s_handle => {
+            info!("k8s service task finished: {:?}", res);
         }
     }
 
     // Wait for tasks to exit cleanly (or force abort)
     let _ = server_handle.abort();
-    let _ = controller_handle.abort();
 
     Ok(())
 }
