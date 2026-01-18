@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use super::informer::{Informer, InformerType};
+use k8s_openapi::api::core::v1::{ConfigMap, Service};
+
+use super::configmap_handler::{ConfigMapHandler};
+use super::service_handler::{ServiceHandler};
+use super::informer::{Informer, InformerGeneric, InformerType};
 use crate::config::QubitConfig;
-use crate::kubernetes::configmap_informer::ConfigMapInformer;
-use crate::kubernetes::service_informer::ServiceInformer;
 
 pub trait InformerFactory {
     fn create_configmap_informer(&self) -> Arc<dyn Informer + Send + Sync>;
@@ -22,12 +24,18 @@ impl InformerFactoryImpl {
 
 impl InformerFactory for InformerFactoryImpl {
     fn create_configmap_informer(&self) -> Arc<dyn Informer + Send + Sync> {
-        ConfigMapInformer::new(self.config.clone(),
-            InformerType::ConfigMap)
+        InformerGeneric::<ConfigMap, ConfigMapHandler>::new(
+            self.config.clone(),
+            InformerType::ConfigMap,
+            ConfigMapHandler,
+        )
     }
 
     fn create_service_informer(&self) -> Arc<dyn Informer + Send + Sync> {
-        ServiceInformer::new(self.config.clone(),
-            InformerType::Service)
+        InformerGeneric::<Service, ServiceHandler>::new(
+            self.config.clone(),
+            InformerType::Service,
+            ServiceHandler,
+        )
     }
 }

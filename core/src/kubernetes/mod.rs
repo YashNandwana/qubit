@@ -1,8 +1,8 @@
-mod configmap_informer;
 pub mod controller;
-mod informer;
+pub mod configmap_handler;
+pub mod service_handler;
+pub mod informer;
 mod informer_factory;
 mod model;
-mod service_informer;
 
 pub use controller::Controller;
