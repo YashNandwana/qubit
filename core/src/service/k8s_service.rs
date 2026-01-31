@@ -1,4 +1,5 @@
 use crate::config::QubitConfig;
+use crate::dao::DAO;
 use crate::kubernetes::controller::Controller;
 use std::sync::Arc;
 
@@ -10,11 +11,12 @@ pub trait K8sService {
 
 pub struct K8sServiceImpl {
     config: Arc<QubitConfig>,
+    db: Arc<DAO>,
 }
 
 impl K8sServiceImpl {
-    pub fn new(config: Arc<QubitConfig>) -> Self {
-        Self { config }
+    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>) -> Self {
+        Self { config, db }
     }
 
     async fn await_informers(&self,
@@ -51,7 +53,7 @@ impl K8sService for K8sServiceImpl {
             .map_err(|e| format!("failed to create kube client: {}", e))?;
 
         // Spawn informers as concurrent tasks
-        // TODO: avoid multiple calls, Composite Pattern maybe?
+        // TODO: avoid multiple calls when more resources are added
         let cm_informer = informers.configmap.clone();
         let cm_client = client.clone();
         let cm_handle = tokio::spawn(async move {

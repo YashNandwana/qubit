@@ -1,7 +1,8 @@
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
 pub struct EbpfNetworkEvent {
     pub timestamp_ns: u64,
     pub src_ip: u32,
@@ -9,6 +10,18 @@ pub struct EbpfNetworkEvent {
     pub src_port: u16,
     pub dst_port: u16,
     pub domain: String,
+}
+
+impl EbpfNetworkEvent {
+    /// ClickHouse schema for this struct. Keep in sync with struct fields above.
+    pub const CREATE_TABLE_SCHEMA: &'static str = "
+        timestamp_ns UInt64,
+        src_ip UInt32,
+        dst_ip UInt32,
+        src_port UInt16,
+        dst_port UInt16,
+        domain String
+    ";
 }
 
 impl fmt::Display for EbpfNetworkEvent {

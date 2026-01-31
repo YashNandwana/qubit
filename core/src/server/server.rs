@@ -6,20 +6,23 @@ use axum::{Router, routing::get};
 use log::info;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use crate::dao::DAO;
 
 #[allow(unused)]
 pub struct HttpServer {
     app_port: u16,
     app_host: String,
     config: Arc<QubitConfig>,
+    db: Arc<DAO>,
 }
 
 impl HttpServer {
-    pub fn new(config: Arc<QubitConfig>) -> Self {
+    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>) -> Self {
         Self {
             app_host: String::from("127.0.0.1"),
             app_port: config.app.http_port,
             config,
+            db,
         }
     }
 
@@ -38,14 +41,10 @@ impl HttpServer {
     }
 
     fn register(&self) -> Router {
-        let state = handler::AppState::new(self.config.clone());
+        let state = handler::AppState::new(self.config.clone(), self.db.clone());
 
         Router::new()
             .route("/ping", get(handler::health))
-            .route(
-                "/aggregate/ebpf/network",
-                post(handler::aggregate_ebpf_network),
-            )
-            .with_state(state)
+            .route("/aggregate/ebpf/network", post(handler::aggregate_ebpf_network)).with_state(state)
     }
 }

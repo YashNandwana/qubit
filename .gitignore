@@ -1,3 +1,5 @@
 /.idea
 /ebpf/target
 /core/target
+/ebpf-common/target
+/ebpf-loader/target

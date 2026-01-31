@@ -8,6 +8,7 @@ const CONFIG_FILE_PATH: &str = "config.yaml";
 pub struct QubitConfig {
     pub app: AppConfig,
     pub kubernetes: KubernetesConfig,
+    pub db: DbConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,6 +30,20 @@ pub struct LeaderElectionConfig {
     pub lease_duration: String,
     pub renew_deadline: String,
     pub retry_period: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DbConfig {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: String,
+    pub table: TableConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TableConfig {
+    pub ebpf_network_events: String,
 }
 
 static CONFIG: OnceLock<Arc<QubitConfig>> = OnceLock::new();

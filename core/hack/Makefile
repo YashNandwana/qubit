@@ -94,3 +94,18 @@ chaos:
 		$(MAKE) delete-objects; \
 		sleep 3; \
 	done
+
+# ------------------------------
+# Server & DB
+# ------------------------------
+.PHONY: core-up
+core-up:
+	@echo "🚀 Starting ClickHouse DB"
+	@docker compose -f clickhouse/docker-compose.yaml up -d
+	@echo "🦀 Starting Qubit core..."
+	@cd .. && cargo run
+
+.PHONY: core-down
+core-down:
+	@echo "🛑 Stopping Qubit core & DB"
+	@docker compose -f clickhouse/docker-compose.yaml down
