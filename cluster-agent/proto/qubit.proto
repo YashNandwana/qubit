@@ -1,0 +1,82 @@
+syntax = "proto3";
+package qubit;
+
+service EventIngestion {
+  rpc SendEbpfNetworkEvent(EbpfNetworkEventRequest) returns (EbpfNetworkEventResponse);
+  rpc SendPodEvent(PodEventRequest)                 returns (PodEventResponse);
+  rpc SendServiceEvent(ServiceEventRequest)         returns (ServiceEventResponse);
+  rpc SendConfigMapEvent(ConfigMapEventRequest)     returns (ConfigMapEventResponse);
+  rpc SendServicePodMap(ServicePodMapRequest)       returns (ServicePodMapResponse);
+}
+
+message EbpfNetworkEventRequest {
+  uint64 timestamp_ns = 1;
+  uint32 src_ip = 2;
+  uint32 dst_ip = 3;
+  uint32 src_port = 4;
+  uint32 dst_port = 5;
+  string method = 6;
+  string path = 7;
+  string host = 8;
+}
+
+message EbpfNetworkEventResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+enum K8sEventType {
+  APPLIED = 0;
+  DELETED = 1;
+}
+
+message PodEventRequest {
+  string pod_ip    = 1;
+  string namespace = 2;
+  K8sEventType event_type = 3;
+}
+
+message PodEventResponse {
+  bool   success = 1;
+  string message = 2;
+}
+
+message ServiceEventRequest {
+  string name         = 1;
+  string namespace    = 2;
+  string service_type = 3;
+  string cluster_ip   = 4;
+  K8sEventType event_type = 5;
+}
+
+message ServiceEventResponse {
+  bool   success = 1;
+  string message = 2;
+}
+
+message ConfigMapEventRequest {
+  string name      = 1;
+  string namespace = 2;
+  K8sEventType event_type = 3;
+}
+
+message ConfigMapEventResponse {
+  bool   success = 1;
+  string message = 2;
+}
+
+message ServicePodEntry {
+  string service_name  = 1;
+  string namespace     = 2;
+  string service_type  = 3;
+  repeated string pod_ips = 4;
+}
+
+message ServicePodMapRequest {
+  repeated ServicePodEntry entries = 1;
+}
+
+message ServicePodMapResponse {
+  bool   success = 1;
+  string message = 2;
+}

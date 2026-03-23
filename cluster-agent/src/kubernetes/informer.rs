@@ -10,41 +10,27 @@ use kube::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::config::QubitConfig;
+use crate::config::ClusterAgentConfig;
 
 #[async_trait]
 pub trait Informer: Send + Sync {
     async fn start(&self, client: Client) -> Result<(), String>;
 }
 
-/// Trait for handling resource events with default implementations.
-/// Override only the methods needed for resource-specific behavior.
 pub trait EventHandler<K: Debug>: Send + Sync {
-    fn on_apply(&self, _resource: &K) {
-        log::info!("Resource applied: {:?}", _resource);
-    }
-
-    fn on_delete(&self, _resource: &K) {
-        log::info!("Resource deleted: {:?}", _resource);
-    }
-
-    fn on_init_apply(&self, _resource: &K) {
-        log::info!("Resource discovered during init: {:?}", _resource);
-    }
-
-    fn on_init_done(&self) {
-        log::info!("Resource initial sync complete");
-    }
+    fn on_apply(&self, _resource: &K) {}
+    fn on_delete(&self, _resource: &K) {}
+    fn on_init_apply(&self, _resource: &K) {}
+    fn on_init_done(&self) {}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InformerType {
     Service,
     ConfigMap,
+    Pod,
 }
 
-/// Generic informer that works with any namespace-scoped Kubernetes resource type.
-/// Accepts an EventHandler to customize event processing per resource type.
 pub struct InformerGeneric<K, H>
 where
     K: Resource<Scope = NamespaceResourceScope>
@@ -56,7 +42,7 @@ where
         + 'static,
     H: EventHandler<K>,
 {
-    config: Arc<QubitConfig>,
+    config: Arc<ClusterAgentConfig>,
     watcher_cfg: watcher::Config,
     informer_type: InformerType,
     handler: Arc<H>,
@@ -74,7 +60,7 @@ where
         + 'static,
     H: EventHandler<K> + 'static,
 {
-    pub fn new(config: Arc<QubitConfig>, informer_type: InformerType, handler: H) -> Arc<Self> {
+    pub fn new(config: Arc<ClusterAgentConfig>, informer_type: InformerType, handler: H) -> Arc<Self> {
         Arc::new(Self {
             config,
             watcher_cfg: watcher::Config::default(),
@@ -110,39 +96,19 @@ where
         log::info!(
             "Starting {} informer for namespace: {}",
             type_name,
-            if namespace.is_empty() {
-                "all"
-            } else {
-                namespace
-            }
+            if namespace.is_empty() { "all" } else { namespace }
         );
 
         let mut watcher = watcher::watcher(api, self.watcher_cfg.clone()).boxed();
 
         while let Some(event) = watcher.next().await {
             match event {
-                Ok(Event::Apply(obj)) => {
-                    log::debug!("{} applied: {:?}", type_name, obj);
-                    self.handler.on_apply(&obj);
-                }
-                Ok(Event::Delete(obj)) => {
-                    log::debug!("{} deleted: {:?}", type_name, obj);
-                    self.handler.on_delete(&obj);
-                }
-                Ok(Event::Init) => {
-                    log::debug!("{} watcher initialized", type_name);
-                }
-                Ok(Event::InitApply(obj)) => {
-                    log::debug!("{} init apply: {:?}", type_name, obj);
-                    self.handler.on_init_apply(&obj);
-                }
-                Ok(Event::InitDone) => {
-                    log::info!("{} watcher init complete", type_name);
-                    self.handler.on_init_done();
-                }
-                Err(e) => {
-                    return Err(format!("{} watcher error: {}", type_name, e));
-                }
+                Ok(Event::Apply(obj)) => self.handler.on_apply(&obj),
+                Ok(Event::Delete(obj)) => self.handler.on_delete(&obj),
+                Ok(Event::Init) => {}
+                Ok(Event::InitApply(obj)) => self.handler.on_init_apply(&obj),
+                Ok(Event::InitDone) => self.handler.on_init_done(),
+                Err(e) => return Err(format!("{} watcher error: {}", type_name, e)),
             }
         }
         Ok(())

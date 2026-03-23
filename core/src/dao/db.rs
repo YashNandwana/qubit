@@ -88,4 +88,22 @@ impl DAO {
 
         Ok(events)
     }
+
+    pub async fn get_ebpf_events_in_range(&self,
+        start_time: u64,
+        end_time: u64) -> Result<Vec<EbpfNetworkEvent>, Error> {
+        let query_str = format!(
+            "SELECT * FROM {} WHERE timestamp_ns >= {} AND timestamp_ns <= {}",
+            self.config.db.table.ebpf_network_events, start_time, end_time
+        );
+
+        let events: Vec<EbpfNetworkEvent> = self
+            .client
+            .query(&query_str)
+            .fetch_all()
+            .await
+            .map_err(|e| Error::EventFetchingFailed(e.to_string()))?;
+
+        Ok(events)
+    }
 }

@@ -1,41 +1,46 @@
-use reqwest::Client;
 use std::sync::Arc;
-use std::time::Duration;
+
+use tonic::transport::Channel;
 
 use crate::config::EbpfLoaderConfig;
 use crate::model::EbpfNetworkEvent;
+use crate::proto::qubit::event_ingestion_client::EventIngestionClient;
+use crate::proto::qubit::EbpfNetworkEventRequest;
 
 pub struct QubitAggregator {
-    config: Arc<EbpfLoaderConfig>,
-    qubit_core_client: Client,
+    client: EventIngestionClient<Channel>,
 }
 
 impl QubitAggregator {
     pub fn new(config: Arc<EbpfLoaderConfig>) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap();
+        let endpoint = format!(
+            "http://{}:{}",
+            config.qubit_core.host, config.qubit_core.grpc_port
+        );
+        let channel = Channel::from_shared(endpoint)
+            .expect("invalid gRPC endpoint")
+            .connect_lazy();
         Self {
-            config,
-            qubit_core_client: client,
+            client: EventIngestionClient::new(channel),
         }
     }
 
     pub async fn record_ebpf_event(
         &self,
-        ebpf_event: EbpfNetworkEvent,
-    ) -> Result<(), reqwest::Error> {
-        let addr = format!(
-            "http://{}:{}/aggregate/ebpf/network",
-            self.config.qubit_core.host, self.config.qubit_core.port
-        );
+        event: EbpfNetworkEvent,
+    ) -> Result<(), tonic::Status> {
+        let request = EbpfNetworkEventRequest {
+            timestamp_ns: event.timestamp_ns,
+            src_ip: event.src_ip,
+            dst_ip: event.dst_ip,
+            src_port: event.src_port as u32,
+            dst_port: event.dst_port as u32,
+            method: event.method,
+            path: event.path,
+            host: event.host,
+        };
 
-        self.qubit_core_client
-            .post(&addr)
-            .json(&ebpf_event)
-            .send()
-            .await?;
+        self.client.clone().send_ebpf_network_event(request).await?;
 
         Ok(())
     }

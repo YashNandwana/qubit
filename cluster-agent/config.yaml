@@ -1,0 +1,6 @@
+qubit_core:
+  host: "localhost"
+  grpc_port: 50051
+
+kubernetes:
+  namespace: ""  # empty = all namespaces

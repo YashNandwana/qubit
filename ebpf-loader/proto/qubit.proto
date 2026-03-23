@@ -1,0 +1,22 @@
+syntax = "proto3";
+package qubit;
+
+service EventIngestion {
+  rpc SendEbpfNetworkEvent(EbpfNetworkEventRequest) returns (EbpfNetworkEventResponse);
+}
+
+message EbpfNetworkEventRequest {
+  uint64 timestamp_ns = 1;
+  uint32 src_ip = 2;
+  uint32 dst_ip = 3;
+  uint32 src_port = 4;
+  uint32 dst_port = 5;
+  string method = 6;
+  string path = 7;
+  string host = 8;
+}
+
+message EbpfNetworkEventResponse {
+  bool success = 1;
+  string message = 2;
+}

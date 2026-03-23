@@ -14,6 +14,7 @@ pub struct QubitConfig {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     pub http_port: u16,
+    pub grpc_port: u16,
     pub upstream: String,
 }
 

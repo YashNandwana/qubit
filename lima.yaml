@@ -1,0 +1,90 @@
+# Lima VM definition for Qubit eBPF development
+# Creates an Ubuntu 24.04 VM with the full build toolchain + K8s environment:
+#   Rust nightly, bpf-linker, eBPF headers, Docker, Kind, kubectl
+#
+# Usage:
+#   brew install lima
+#   make -C ebpf/hack lima-create   # creates and starts the VM
+#   make -C ebpf/hack lima-stop     # stop when done
+#
+# The host home directory is mounted writable inside the VM,
+# so the project is accessible at its real macOS path (no rsync needed).
+# Builds run natively in the VM — no Docker-in-Docker for compilation.
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+cpus: 4
+memory: "8GiB"
+disk: "30GiB"
+
+mounts:
+  - location: "~"
+    writable: true
+
+portForwards:
+  - guestPort: 6443
+    hostPort: 6443
+    proto: tcp
+  - guestPortRange: [30000, 32767]
+    hostPortRange: [30000, 32767]
+    proto: tcp
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+
+      # Skip if already provisioned
+      if command -v kind &>/dev/null; then
+        echo "Already provisioned, skipping."
+        exit 0
+      fi
+
+      export DEBIAN_FRONTEND=noninteractive
+
+      # Install Docker
+      apt-get update
+      apt-get install -y ca-certificates curl gnupg
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        > /etc/apt/sources.list.d/docker.list
+      apt-get update
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+
+      # Add all non-root human users to docker group (Lima maps macOS user into VM)
+      awk -F: '$3 >= 500 && $3 < 60000 {print $1}' /etc/passwd | while read -r u; do
+        usermod -aG docker "$u"
+      done
+
+      # Build dependencies for eBPF and Rust
+      apt-get install -y \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        linux-headers-generic \
+        libbpf-dev \
+        libelf-dev \
+        zlib1g-dev \
+        protobuf-compiler
+
+      # Install kubectl
+      ARCH=$(dpkg --print-architecture)
+      KUBE_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+      curl -fsSL "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/${ARCH}/kubectl" \
+        -o /usr/local/bin/kubectl
+      chmod +x /usr/local/bin/kubectl
+
+      # Install Kind
+      curl -fsSL "https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-${ARCH}" \
+        -o /usr/local/bin/kind
+      chmod +x /usr/local/bin/kind
+
+      echo "System provisioning complete."
+      echo "Run 'make vm-setup' to install the Rust toolchain."

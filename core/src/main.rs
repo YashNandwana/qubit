@@ -1,23 +1,21 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::signal;
 use tracing::info;
 
 mod aggregator;
 mod config;
 mod dao;
-mod kubernetes;
 mod model;
 mod server;
-mod service;
+mod topology;
 
 use crate::config::init_config;
 use crate::dao::DAO;
-use crate::server::HttpServer;
-use crate::service::{K8sService, K8sServiceImpl};
+use crate::server::ServerFactory;
+use crate::topology::Topology;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // logging
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -25,41 +23,37 @@ async fn main() -> anyhow::Result<()> {
     let config: Arc<config::QubitConfig> = init_config();
     info!("Config loaded: {:?}", config);
 
-    // initialize db
     let db = Arc::new(DAO::new(config.clone()).map_err(|e| anyhow::anyhow!(e))?);
     db.initialize_schema().await.map_err(|e| anyhow::anyhow!(e))?;
     info!("DB initialized");
 
-    // spawn server as async task
-    let server_cfg = config.clone();
-    let server_db = db.clone();
-    let mut server_handle = tokio::spawn(async move {
-        let server: HttpServer = HttpServer::new(server_cfg, server_db);
-        server.do_serve().await.map_err(|e| e.to_string())
+    let topology = Arc::new(RwLock::new(Topology::new()));
+
+    let factory = ServerFactory::new(config.clone(), db.clone(), topology.clone());
+    let http = factory.http();
+    let grpc = factory.grpc();
+
+    let mut http_handle = tokio::spawn(async move {
+        http.do_serve().await.map_err(|e| e.to_string())
     });
 
-    // spawn informers as async task
-    let k8s_service = K8sServiceImpl::new(config.clone(), db);
-    let mut k8s_handle = tokio::spawn(async move {
-        if let Err(e) = k8s_service.informer_service().await {
-            log::error!("K8s service failed: {}", e);
-        }
+    let mut grpc_handle = tokio::spawn(async move {
+        grpc.do_serve().await
     });
 
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("shutdown signal received");
         }
-        res = &mut server_handle => {
-            info!("server task finished: {:?}", res);
+        res = &mut http_handle => {
+            info!("http server task finished: {:?}", res);
         }
-        res = &mut k8s_handle => {
-            info!("k8s service task finished: {:?}", res);
+        res = &mut grpc_handle => {
+            info!("grpc server task finished: {:?}", res);
         }
     }
 
-    // Wait for tasks to exit cleanly (or force abort)
-    let _ = server_handle.abort();
+    let _ = http_handle.abort();
 
     Ok(())
 }

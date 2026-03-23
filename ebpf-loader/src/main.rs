@@ -1,6 +1,7 @@
 mod config;
 mod loader;
 mod model;
+mod proto;
 mod service;
 
 #[tokio::main]

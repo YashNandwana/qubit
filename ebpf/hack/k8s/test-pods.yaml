@@ -1,0 +1,89 @@
+---
+# Test Service A - Makes HTTP requests
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ping-service-a
+  labels:
+    app: ping-service-a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ping-service-a
+  template:
+    metadata:
+      labels:
+        app: ping-service-a
+    spec:
+      containers:
+      - name: pinger
+        image: curlimages/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Starting ping-service-a with HTTP requests..."
+          while true; do
+            echo "=== $(date) ==="
+            echo "HTTP to service-b..."
+            curl -s -o /dev/null -w "%{http_code}" http://service-b.default.svc:80/ 2>/dev/null || echo "failed"
+            echo ""
+            echo "HTTP to httpbin..."
+            curl -s -o /dev/null -w "%{http_code}" http://httpbin.org/get 2>/dev/null || echo "failed"
+            echo ""
+            sleep 5
+          done
+        resources:
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-a
+spec:
+  selector:
+    app: ping-service-a
+  ports:
+  - port: 80
+    targetPort: 80
+---
+# Test Service B - Simple HTTP server + makes requests
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ping-service-b
+  labels:
+    app: ping-service-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ping-service-b
+  template:
+    metadata:
+      labels:
+        app: ping-service-b
+    spec:
+      containers:
+      - name: http-server
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-b
+spec:
+  selector:
+    app: ping-service-b
+  ports:
+  - port: 80
+    targetPort: 80

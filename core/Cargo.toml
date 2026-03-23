@@ -26,3 +26,10 @@ anyhow = "1.0.100"
 async-trait = "0.1.89"
 clickhouse = "0.14.2"
 thiserror = "1.0"
+moka = { version = "0.12.14", features = ["future", "sync"] }
+tonic = { version = "0.12", features = ["transport"] }
+tonic-reflection = "0.12"
+prost = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"

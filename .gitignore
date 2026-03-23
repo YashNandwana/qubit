@@ -3,3 +3,5 @@
 /core/target
 /ebpf-common/target
 /ebpf-loader/target
+/cluster-agent/target
+*app.env

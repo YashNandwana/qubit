@@ -6,10 +6,11 @@ NAMESPACE ?= playground
 KUBECTL ?= kubectl
 KIND ?= kind
 
+REPO_ROOT := $(shell cd ../.. && pwd)
+
 # ------------------------------
 # Helpers
 # ------------------------------
-# check if ExternalSecret CRD/api is available
 has-external-secret-api:
 	@$(KUBECTL) api-resources --api-group=external-secrets.io >/dev/null 2>&1 && echo "yes" || echo "no"
 
@@ -35,8 +36,6 @@ cluster-down:
 # ------------------------------
 # Optional: Install External Secrets Operator
 # ------------------------------
-# NOTE: This target will print instructions to install the operator.
-# Installing an operator often requires network access and admin privileges, so we don't auto-curl+apply by default.
 .PHONY: install-external-secrets
 install-external-secrets:
 	@echo "ℹ️  To install External Secrets Operator (ESO) follow its official install instructions:"
@@ -54,6 +53,7 @@ create-objects:
 	@echo "📦 Creating K8s native objects in namespace $(NAMESPACE)"
 	@$(KUBECTL) apply -f manifests/configmap.yaml -n $(NAMESPACE)
 	@$(KUBECTL) apply -f manifests/service.yaml -n $(NAMESPACE)
+	@$(KUBECTL) apply -f manifests/pod.yaml -n $(NAMESPACE)
 	@echo "🔎 Checking for ExternalSecret API..."
 	@if [ "$$($(KUBECTL) api-resources --api-group=external-secrets.io 2>/dev/null | grep -c ExternalSecret)" -ge 1 ]; then \
 		echo "✅ ExternalSecret API present — applying external secret"; \
@@ -73,7 +73,7 @@ delete-objects:
 	@echo "🗑️  Deleting K8s objects"
 	@$(KUBECTL) delete -f manifests/configmap.yaml -n $(NAMESPACE) --ignore-not-found || true
 	@$(KUBECTL) delete -f manifests/service.yaml -n $(NAMESPACE) --ignore-not-found || true
-	@# delete external only if API present
+	@$(KUBECTL) delete -f manifests/pod.yaml -n $(NAMESPACE) --ignore-not-found || true
 	@if [ "$$($(KUBECTL) api-resources --api-group=external-secrets.io 2>/dev/null | grep -c ExternalSecret)" -ge 1 ]; then \
 		$(KUBECTL) delete -f manifests/external-secret.yaml -n $(NAMESPACE) --ignore-not-found || true; \
 	else \
@@ -102,6 +102,12 @@ chaos:
 core-up:
 	@echo "🚀 Starting ClickHouse DB"
 	@docker compose -f clickhouse/docker-compose.yaml up -d
+	@echo "⏳ Waiting for ClickHouse to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		docker exec $$(docker compose -f clickhouse/docker-compose.yaml ps -q) clickhouse-client --query "SELECT 1" >/dev/null 2>&1 && break; \
+		echo "  Waiting... ($$i/10)"; \
+		sleep 1; \
+	done
 	@echo "🦀 Starting Qubit core..."
 	@cd .. && cargo run
 
@@ -109,3 +115,16 @@ core-up:
 core-down:
 	@echo "🛑 Stopping Qubit core & DB"
 	@docker compose -f clickhouse/docker-compose.yaml down
+
+# ------------------------------
+# Cluster Agent
+# ------------------------------
+.PHONY: cluster-agent-up
+cluster-agent-up:
+	@echo "🤖 Starting cluster-agent..."
+	@cd $(REPO_ROOT)/cluster-agent && CONFIG_PATH=config.yaml cargo run
+
+.PHONY: cluster-agent-down
+cluster-agent-down:
+	@echo "🛑 Stopping cluster-agent"
+	@pkill -f "cluster-agent" || true
