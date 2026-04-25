@@ -1,8 +1,8 @@
 # K8s deployment config
-# For local dev: IP is the Mac host gateway from inside the Lima VM.
+# For local dev: 192.168.5.2 is the Mac host gateway from inside the Lima VM.
 # For production: use "qubit-core.default.svc.cluster.local"
 qubit_core:
-  host: "IP"
+  host: "192.168.5.2"
   grpc_port: 50051
 
 perf_array_name: "NETWORK_EVENTS"

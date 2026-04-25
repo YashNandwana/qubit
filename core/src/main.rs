@@ -1,6 +1,5 @@
 use std::sync::{Arc, RwLock};
 use tokio::signal;
-use tracing::info;
 
 mod aggregator;
 mod config;
@@ -21,39 +20,41 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config: Arc<config::QubitConfig> = init_config();
-    info!("Config loaded: {:?}", config);
+    log::info!("Config loaded: {:?}", config);
 
     let db = Arc::new(DAO::new(config.clone()).map_err(|e| anyhow::anyhow!(e))?);
     db.initialize_schema().await.map_err(|e| anyhow::anyhow!(e))?;
-    info!("DB initialized");
+    log::info!("DB initialized");
 
     let topology = Arc::new(RwLock::new(Topology::new()));
 
     let factory = ServerFactory::new(config.clone(), db.clone(), topology.clone());
     let http = factory.http();
     let grpc = factory.grpc();
+    let query = factory.query();
 
     let mut http_handle = tokio::spawn(async move {
         http.do_serve().await.map_err(|e| e.to_string())
     });
 
     let mut grpc_handle = tokio::spawn(async move {
-        grpc.do_serve().await
+        grpc.do_serve(query).await
     });
 
     tokio::select! {
         _ = signal::ctrl_c() => {
-            info!("shutdown signal received");
+            log::info!("shutdown signal received");
         }
         res = &mut http_handle => {
-            info!("http server task finished: {:?}", res);
+            log::info!("http server task finished: {:?}", res);
         }
         res = &mut grpc_handle => {
-            info!("grpc server task finished: {:?}", res);
+            log::info!("grpc server task finished: {:?}", res);
         }
     }
 
     let _ = http_handle.abort();
+    let _ = grpc_handle.abort();
 
     Ok(())
 }

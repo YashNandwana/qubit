@@ -88,11 +88,11 @@ chaos:
 	@echo "🔥 Starting chaos loop — create, update, delete repeatedly (ctrl-c to stop)"
 	@while true; do \
 		$(MAKE) create-objects; \
-		sleep 3; \
+		sleep 30; \
 		$(MAKE) update-objects; \
-		sleep 3; \
+		sleep 30; \
 		$(MAKE) delete-objects; \
-		sleep 3; \
+		sleep 30; \
 	done
 
 # ------------------------------

@@ -31,9 +31,11 @@ enum K8sEventType {
 }
 
 message PodEventRequest {
-  string pod_ip    = 1;
-  string namespace = 2;
+  string pod_ip       = 1;
+  string namespace    = 2;
   K8sEventType event_type = 3;
+  string service_name = 4;
+  string service_type = 5;
 }
 
 message PodEventResponse {

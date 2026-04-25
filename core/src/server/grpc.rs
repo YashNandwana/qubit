@@ -8,7 +8,9 @@ use crate::dao::DAO;
 use crate::model::EbpfNetworkEventInput;
 use crate::topology::Topology;
 
+use super::query::QueryServer;
 use super::qubit::event_ingestion_server::{EventIngestion, EventIngestionServer};
+use super::qubit::qubit_query_server::QubitQueryServer;
 use super::qubit::{
     ConfigMapEventRequest, ConfigMapEventResponse,
     EbpfNetworkEventRequest, EbpfNetworkEventResponse,
@@ -27,13 +29,15 @@ pub struct GrpcServer {
 
 impl GrpcServer {
     pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>) -> Self {
-        let k8s_aggregator = Arc::new(K8sAggregator::new());
+        let k8s_aggregator = Arc::new(K8sAggregator::new(topology.clone()));
         let pod_cache = k8s_aggregator.pod_cache();
         let ebpf_aggregator = Arc::new(EbpfAggregator::new(config.clone(), db, topology, pod_cache));
         Self { config, ebpf_aggregator, k8s_aggregator }
     }
 
-    pub async fn do_serve(self) -> Result<(), String> {
+    pub async fn do_serve(self, query_server: QueryServer) -> Result<(), String> {
+        self.ebpf_aggregator.start_flush_timer(self.config.app.ebpf_flush_interval_secs);
+
         let addr = format!("0.0.0.0:{}", self.config.app.grpc_port)
             .parse()
             .map_err(|e: std::net::AddrParseError| e.to_string())?;
@@ -48,6 +52,7 @@ impl GrpcServer {
         tonic::transport::Server::builder()
             .add_service(reflection)
             .add_service(EventIngestionServer::new(self))
+            .add_service(QubitQueryServer::new(query_server))
             .serve(addr)
             .await
             .map_err(|e| e.to_string())
@@ -90,8 +95,16 @@ impl EventIngestion for GrpcServer {
         let req = request.into_inner();
         match K8sEventType::try_from(req.event_type) {
             Ok(K8sEventType::Applied) => {
-                log::info!("Pod applied: {} -> {}", req.pod_ip, req.namespace);
-                self.k8s_aggregator.record_pod_applied(&req.pod_ip, &req.namespace, "", "");
+                log::info!(
+                    "Pod applied: {} -> {} (service: {})",
+                    req.pod_ip, req.namespace, req.service_name
+                );
+                self.k8s_aggregator.record_pod_applied(
+                    &req.pod_ip,
+                    &req.namespace,
+                    &req.service_name,
+                    &req.service_type,
+                );
             }
             Ok(K8sEventType::Deleted) => {
                 log::info!("Pod deleted: {}", req.pod_ip);

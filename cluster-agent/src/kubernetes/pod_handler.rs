@@ -3,24 +3,34 @@ use std::sync::Arc;
 use k8s_openapi::api::core::v1::Pod;
 
 use super::informer::EventHandler;
+use super::service_registry::ServiceRegistry;
 use crate::service::ClusterAggregator;
 
 pub struct PodHandler {
     aggregator: Arc<ClusterAggregator>,
+    registry: Arc<ServiceRegistry>,
 }
 
 impl PodHandler {
-    pub fn new(aggregator: Arc<ClusterAggregator>) -> Self {
-        Self { aggregator }
+    pub fn new(aggregator: Arc<ClusterAggregator>, registry: Arc<ServiceRegistry>) -> Self {
+        Self { aggregator, registry }
     }
 }
 
 impl EventHandler<Pod> for PodHandler {
     fn on_apply(&self, pod: &Pod) {
         if let Some((ip, namespace)) = pod_ip_and_namespace(pod) {
+            // Try to find which service this pod belongs to via label matching
+            let (service_name, service_type) = self
+                .registry
+                .find_service_for_pod(pod)
+                .unwrap_or_default();
             let aggregator = self.aggregator.clone();
             tokio::spawn(async move {
-                if let Err(e) = aggregator.send_pod_applied(ip.clone(), namespace).await {
+                if let Err(e) = aggregator
+                    .send_pod_applied(ip.clone(), namespace, service_name, service_type)
+                    .await
+                {
                     log::error!("Failed to send pod applied (ip={}): {}", ip, e);
                 }
             });
@@ -38,8 +48,10 @@ impl EventHandler<Pod> for PodHandler {
         }
     }
 
-    fn on_init_apply(&self, pod: &Pod) {
-        self.on_apply(pod);
+    fn on_init_apply(&self, _pod: &Pod) {
+        // Initial pod state is handled by send_initial_pod_service_map at startup.
+        // Skipping here avoids overwriting correct service info with potentially
+        // incomplete info if the service registry isn't fully populated yet.
     }
 
     fn on_init_done(&self) {

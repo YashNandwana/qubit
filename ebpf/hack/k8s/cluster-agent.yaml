@@ -1,0 +1,82 @@
+---
+# ServiceAccount for the cluster-agent
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qubit-cluster-agent
+---
+# ClusterRole — needs read access to pods, services, configmaps across all namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: qubit-cluster-agent
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: qubit-cluster-agent
+subjects:
+- kind: ServiceAccount
+  name: qubit-cluster-agent
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: qubit-cluster-agent
+  apiGroup: rbac.authorization.k8s.io
+---
+# Config pointing to qubit-core on the Mac host
+# 192.168.5.2 is the Mac host gateway from inside the Lima VM / Kind cluster
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qubit-cluster-agent-config
+data:
+  config.yaml: |
+    qubit_core:
+      host: "192.168.5.2"
+      grpc_port: 50051
+    kubernetes:
+      namespace: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qubit-cluster-agent
+  labels:
+    app: qubit-cluster-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qubit-cluster-agent
+  template:
+    metadata:
+      labels:
+        app: qubit-cluster-agent
+    spec:
+      serviceAccountName: qubit-cluster-agent
+      containers:
+      - name: cluster-agent
+        image: qubit-cluster-agent:latest
+        imagePullPolicy: Never
+        env:
+        - name: RUST_LOG
+          value: info
+        - name: CONFIG_PATH
+          value: /app/config.yaml
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        resources:
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+      volumes:
+      - name: config
+        configMap:
+          name: qubit-cluster-agent-config

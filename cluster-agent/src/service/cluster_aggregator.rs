@@ -27,10 +27,18 @@ impl ClusterAggregator {
         }
     }
 
-    pub async fn send_pod_applied(&self, pod_ip: String, namespace: String) -> Result<(), tonic::Status> {
+    pub async fn send_pod_applied(
+        &self,
+        pod_ip: String,
+        namespace: String,
+        service_name: String,
+        service_type: String,
+    ) -> Result<(), tonic::Status> {
         self.client.clone().send_pod_event(PodEventRequest {
             pod_ip,
             namespace,
+            service_name,
+            service_type,
             event_type: K8sEventType::Applied as i32,
         }).await?;
         Ok(())
@@ -40,6 +48,8 @@ impl ClusterAggregator {
         self.client.clone().send_pod_event(PodEventRequest {
             pod_ip,
             namespace: String::new(),
+            service_name: String::new(),
+            service_type: String::new(),
             event_type: K8sEventType::Deleted as i32,
         }).await?;
         Ok(())

@@ -22,9 +22,9 @@ pub struct Topology {
     pub downstream: HashMap<NodeId, Vec<Flow>>,
 }
 
+#[derive(Default)]
 pub struct NodeData {
     pub ip:         String,
-    pub ports:      Vec<u16>,
     pub k8s_events: Vec<K8sEvent>,
 }
 
@@ -46,6 +46,9 @@ impl Topology {
     }
 
     pub fn add_node(&mut self, node: NodeId, node_data: NodeData) {
+        if self.nodes.contains_key(&node) {
+            return;
+        }
         self.nodes.insert(node, node_data);
     }
 
@@ -57,6 +60,72 @@ impl Topology {
     pub fn add_k8s_event(&mut self, node: NodeId, event: K8sEvent) {
         if let Some(node_data) = self.nodes.get_mut(&node) {
             node_data.k8s_events.push(event);
+        }
+    }
+
+    pub fn get_topology(&self) -> &Topology {
+        return &self;
+    }
+
+    /// When a pod-cache mapping arrives (ip → service/namespace), fix any
+    /// stale topology node that was created with the raw IP before the
+    /// mapping existed. Rewrites the node key and every flow reference.
+    pub fn resolve_unknown_node(&mut self, ip: &str, service_name: &str, namespace: &str) {
+        let stale_id = NodeId {
+            service_name: ip.to_string(),
+            namespace: "unknown".to_string(),
+        };
+
+        // Nothing to fix if no stale node exists for this IP
+        if !self.nodes.contains_key(&stale_id) {
+            return;
+        }
+
+        let resolved_id = NodeId {
+            service_name: service_name.to_string(),
+            namespace: namespace.to_string(),
+        };
+
+        // 1. Move node data from stale key → resolved key.
+        //    `remove` returns Option<V> — we take ownership of the value
+        //    and insert it under the new key. `or_insert` avoids overwriting
+        //    if a correct node already exists from later events.
+        if let Some(node_data) = self.nodes.remove(&stale_id) {
+            self.nodes.entry(resolved_id.clone()).or_insert(node_data);
+        }
+
+        // 2. Re-key upstream map (keyed by destination).
+        //    If the stale node was a destination, move its entry.
+        if let Some(flows) = self.upstream.remove(&stale_id) {
+            self.upstream.entry(resolved_id.clone()).or_default().extend(flows);
+        }
+
+        // 3. Re-key downstream map (keyed by source).
+        if let Some(flows) = self.downstream.remove(&stale_id) {
+            self.downstream.entry(resolved_id.clone()).or_default().extend(flows);
+        }
+
+        // 4. Update flow references everywhere — the stale NodeId might appear
+        //    as source or destination inside flows belonging to OTHER nodes.
+        for flows in self.upstream.values_mut() {
+            for flow in flows.iter_mut() {
+                if flow.source_node == stale_id {
+                    flow.source_node = resolved_id.clone();
+                }
+                if flow.destination_node == stale_id {
+                    flow.destination_node = resolved_id.clone();
+                }
+            }
+        }
+        for flows in self.downstream.values_mut() {
+            for flow in flows.iter_mut() {
+                if flow.source_node == stale_id {
+                    flow.source_node = resolved_id.clone();
+                }
+                if flow.destination_node == stale_id {
+                    flow.destination_node = resolved_id.clone();
+                }
+            }
         }
     }
 }

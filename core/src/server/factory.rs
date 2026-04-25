@@ -6,6 +6,7 @@ use crate::topology::Topology;
 
 use super::grpc::GrpcServer;
 use super::http::HttpServer;
+use super::query::QueryServer;
 
 pub struct ServerFactory {
     config: Arc<QubitConfig>,
@@ -24,5 +25,9 @@ impl ServerFactory {
 
     pub fn grpc(&self) -> GrpcServer {
         GrpcServer::new(self.config.clone(), self.db.clone(), self.topology.clone())
+    }
+
+    pub fn query(&self) -> QueryServer {
+        QueryServer::new(self.topology.clone())
     }
 }

@@ -2,9 +2,11 @@ pub mod factory;
 pub mod grpc;
 pub mod handler;
 pub mod http;
+pub mod query;
 
 pub use factory::ServerFactory;
 pub use http::HttpServer;
+pub use query::QueryServer;
 
 pub mod qubit {
     tonic::include_proto!("qubit");

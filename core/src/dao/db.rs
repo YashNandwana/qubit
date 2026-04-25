@@ -71,12 +71,10 @@ impl DAO {
         Ok(())
     }
 
-    pub async fn fetch_events_by_column(&self,
-        column_name: &str,
-        value: &str) -> Result<Vec<EbpfNetworkEvent>, Error> {
+    pub async fn fetch_events_by_service(&self, service_name: String) -> Result<Vec<EbpfNetworkEvent>, Error> {
         let query_str = format!(
-            "SELECT * FROM {} WHERE {} = '{}'",
-            self.config.db.table.ebpf_network_events, column_name, value
+            "SELECT * FROM {} WHERE service_name = '{}'",
+            self.config.db.table.ebpf_network_events, service_name
         );
 
         let events: Vec<EbpfNetworkEvent> = self

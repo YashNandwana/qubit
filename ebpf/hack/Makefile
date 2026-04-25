@@ -30,6 +30,7 @@ PROJECT_DIR = $(shell cd ../.. && pwd)
 # Kind Configuration
 KIND_CLUSTER ?= qubit-test
 KIND_IMAGE ?= qubit-ebpf:latest
+CLUSTER_AGENT_IMAGE ?= qubit-cluster-agent:latest
 
 # eBPF bytecode output path (built on macOS via Docker)
 EBPF_BYTECODE = $(PROJECT_DIR)/ebpf/target/bpfel-unknown-none/release/ebpf
@@ -225,20 +226,22 @@ help:
 	@echo "  lima-status        Show Lima VM status"
 	@echo ""
 	@echo "=== LIMA VM TESTING (Kind/K8s - Production-like) ==="
-	@echo "  vm-setup           Install Rust in VM (one-time, no bpf-linker needed)"
-	@echo "  vm-check           Check Lima VM connectivity and tools"
-	@echo "  vm-cluster-create  Create Kind cluster in Lima VM"
-	@echo "  vm-cluster-delete  Delete Kind cluster in Lima VM"
-	@echo "  vm-build-loader    Build loader natively in Lima VM (fast)"
-	@echo "  vm-docker-build    Build K8s runtime image in Lima VM"
-	@echo "  vm-kind-load       Load image into Kind cluster"
-	@echo "  vm-deploy          Deploy DaemonSet + test pods"
-	@echo "  vm-logs            View eBPF DaemonSet logs"
-	@echo "  vm-status          Check pod status"
-	@echo "  vm-test            Full end-to-end test (first time)"
-	@echo "  vm-redeploy        Rebuild loader + redeploy (fast iteration)"
-	@echo "  vm-cleanup         Remove deployments"
-	@echo "  vm-shell           Open a shell in the Lima VM"
+	@echo "  vm-setup                    Install Rust in VM (one-time)"
+	@echo "  vm-check                    Check Lima VM connectivity and tools"
+	@echo "  vm-cluster-create           Create Kind cluster in Lima VM"
+	@echo "  vm-cluster-delete           Delete Kind cluster in Lima VM"
+	@echo "  vm-build-loader             Build loader natively in Lima VM"
+	@echo "  vm-cluster-agent            Build + package cluster-agent for Kind"
+	@echo "  vm-docker-build             Build eBPF K8s runtime image"
+	@echo "  vm-kind-load                Load eBPF image into Kind cluster"
+	@echo "  vm-deploy                   Deploy cluster-agent + DaemonSet + test pods"
+	@echo "  vm-logs                     View eBPF DaemonSet logs"
+	@echo "  vm-status                   Check pod status"
+	@echo "  vm-test                     Full end-to-end test (first time)"
+	@echo "  vm-redeploy                 Rebuild all + redeploy (fast iteration)"
+	@echo "  vm-chaos                    Chaos loop: create/update/delete objects"
+	@echo "  vm-cleanup                  Remove all deployments"
+	@echo "  vm-shell                    Open a shell in the Lima VM"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  clean              Remove build artifacts"
@@ -363,15 +366,47 @@ vm-kind-load:
 	@echo "Image loaded into Kind cluster"
 
 # ------------------------------
+# Cluster Agent (Build & Deploy)
+# ------------------------------
+
+# Build cluster-agent binary natively in Lima VM
+.PHONY: vm-build-cluster-agent
+vm-build-cluster-agent:
+	@echo "Building cluster-agent in Lima VM..."
+	@$(LIMA_CMD) bash -c "export PATH=\$$HOME/.cargo/bin:\$$PATH && cd $(PROJECT_DIR)/cluster-agent && cargo build --release"
+	@echo "Cluster-agent built."
+
+# Build cluster-agent Docker image in Lima VM
+.PHONY: vm-docker-build-cluster-agent
+vm-docker-build-cluster-agent:
+	@echo "Building cluster-agent K8s image in Lima VM..."
+	@$(LIMA_CMD) bash -c "cd $(PROJECT_DIR) && docker build -t $(CLUSTER_AGENT_IMAGE) -f ebpf/hack/Dockerfile.cluster-agent ."
+	@echo "Docker image built: $(CLUSTER_AGENT_IMAGE)"
+
+# Load cluster-agent image into Kind cluster
+.PHONY: vm-kind-load-cluster-agent
+vm-kind-load-cluster-agent:
+	@echo "Loading cluster-agent image into Kind cluster..."
+	@$(LIMA_CMD) bash -c "kind load docker-image $(CLUSTER_AGENT_IMAGE) --name $(KIND_CLUSTER)"
+	@echo "Cluster-agent image loaded into Kind cluster"
+
+# Full cluster-agent pipeline: build, package, load
+.PHONY: vm-cluster-agent
+vm-cluster-agent: vm-build-cluster-agent vm-docker-build-cluster-agent vm-kind-load-cluster-agent
+	@echo "Cluster-agent ready for deployment."
+
+# ------------------------------
 # Kubernetes Deployment
 # ------------------------------
 .PHONY: vm-deploy
 vm-deploy:
-	@echo "Deploying test pods and eBPF DaemonSet..."
-	@$(LIMA_CMD) bash -c "kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/test-pods.yaml && \
+	@echo "Deploying cluster-agent, test pods, and eBPF DaemonSet..."
+	@$(LIMA_CMD) bash -c "kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/cluster-agent.yaml && \
+		kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/test-pods.yaml && \
 		kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/ebpf-daemonset.yaml"
 	@echo "Waiting for pods to be ready..."
-	@$(LIMA_CMD) bash -c "kubectl wait --for=condition=Ready pod -l app=qubit-ebpf --timeout=60s 2>/dev/null || true"
+	@$(LIMA_CMD) bash -c "kubectl wait --for=condition=Ready pod -l app=qubit-ebpf --timeout=60s 2>/dev/null || true && \
+		kubectl wait --for=condition=Ready pod -l app=qubit-cluster-agent --timeout=60s 2>/dev/null || true"
 	@echo "Deployed! Use 'make vm-status' to check status"
 
 .PHONY: vm-status
@@ -394,8 +429,47 @@ vm-logs-pods:
 vm-cleanup:
 	@echo "Removing deployments..."
 	@$(LIMA_CMD) bash -c "kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/ebpf-daemonset.yaml --ignore-not-found && \
-		kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/test-pods.yaml --ignore-not-found"
+		kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/test-pods.yaml --ignore-not-found && \
+		kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/cluster-agent.yaml --ignore-not-found"
 	@echo "Cleanup complete"
+
+# ------------------------------
+# Chaos Testing (exercises cluster-agent inside the VM cluster)
+# ------------------------------
+CHAOS_NAMESPACE ?= playground
+CHAOS_MANIFESTS = $(PROJECT_DIR)/core/hack/manifests
+
+.PHONY: vm-chaos-create
+vm-chaos-create:
+	@$(LIMA_CMD) bash -c "kubectl create namespace $(CHAOS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f - && \
+		kubectl apply -f $(CHAOS_MANIFESTS)/configmap.yaml -n $(CHAOS_NAMESPACE) && \
+		kubectl apply -f $(CHAOS_MANIFESTS)/service.yaml -n $(CHAOS_NAMESPACE) && \
+		kubectl apply -f $(CHAOS_MANIFESTS)/pod.yaml -n $(CHAOS_NAMESPACE)"
+
+.PHONY: vm-chaos-update
+vm-chaos-update:
+	@$(LIMA_CMD) bash -c "\
+		kubectl patch configmap sample-config -n $(CHAOS_NAMESPACE) --type merge -p '{\"data\":{\"UPDATED_KEY\":\"updated-value\"}}' || true && \
+		kubectl patch service sample-service -n $(CHAOS_NAMESPACE) --type merge -p '{\"spec\":{\"ports\":[{\"port\":8080,\"targetPort\":80}]}}' || true"
+
+.PHONY: vm-chaos-delete
+vm-chaos-delete:
+	@$(LIMA_CMD) bash -c "\
+		kubectl delete -f $(CHAOS_MANIFESTS)/configmap.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found && \
+		kubectl delete -f $(CHAOS_MANIFESTS)/service.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found && \
+		kubectl delete -f $(CHAOS_MANIFESTS)/pod.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found"
+
+.PHONY: vm-chaos
+vm-chaos:
+	@echo "Starting chaos loop in Lima VM cluster (ctrl-c to stop)..."
+	@while true; do \
+		$(MAKE) vm-chaos-create; \
+		sleep 30; \
+		$(MAKE) vm-chaos-update; \
+		sleep 30; \
+		$(MAKE) vm-chaos-delete; \
+		sleep 30; \
+	done
 
 # ------------------------------
 # Full Test Workflow
@@ -403,7 +477,7 @@ vm-cleanup:
 
 # First-time: cluster + build everything + deploy
 .PHONY: vm-test
-vm-test: vm-cluster-create vm-build-loader vm-docker-build vm-kind-load vm-deploy
+vm-test: vm-cluster-create vm-build-loader vm-cluster-agent vm-docker-build vm-kind-load vm-deploy
 	@echo ""
 	@echo "=========================================="
 	@echo "  Production-like test environment ready!"
@@ -415,9 +489,9 @@ vm-test: vm-cluster-create vm-build-loader vm-docker-build vm-kind-load vm-deplo
 	@echo "  make vm-cleanup  - Remove deployments"
 	@echo ""
 
-# Fast iteration: rebuild loader + redeploy (skips cluster + eBPF bytecode)
+# Fast iteration: rebuild loader + cluster-agent + redeploy (skips cluster + eBPF bytecode)
 .PHONY: vm-redeploy
-vm-redeploy: vm-build-loader vm-docker-build vm-kind-load vm-cleanup vm-deploy
+vm-redeploy: vm-build-loader vm-cluster-agent vm-docker-build vm-kind-load vm-cleanup vm-deploy
 	@echo ""
 	@echo "Redeployed! Use 'make vm-logs' to check output."
 	@echo ""
