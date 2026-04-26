@@ -47,6 +47,7 @@ pub struct DbConfig {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TableConfig {
     pub ebpf_network_events: String,
+    pub k8s_resource_events: String,
 }
 
 static CONFIG: OnceLock<Arc<QubitConfig>> = OnceLock::new();

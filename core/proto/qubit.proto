@@ -7,6 +7,7 @@ service EventIngestion {
   rpc SendServiceEvent(ServiceEventRequest)         returns (ServiceEventResponse);
   rpc SendConfigMapEvent(ConfigMapEventRequest)     returns (ConfigMapEventResponse);
   rpc SendServicePodMap(ServicePodMapRequest)       returns (ServicePodMapResponse);
+  rpc SendK8sResourceEvent(K8sResourceEventRequest) returns (K8sResourceEventResponse);
 }
 
 message EbpfNetworkEventRequest {
@@ -79,6 +80,20 @@ message ServicePodMapRequest {
 }
 
 message ServicePodMapResponse {
+  bool   success = 1;
+  string message = 2;
+}
+
+message K8sResourceEventRequest {
+  string resource_type         = 1;
+  string name                  = 2;
+  string namespace             = 3;
+  K8sEventType event_type      = 4;
+  map<string, string> labels   = 5;
+  string resource_data         = 6;
+}
+
+message K8sResourceEventResponse {
   bool   success = 1;
   string message = 2;
 }

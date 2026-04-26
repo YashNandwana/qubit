@@ -19,29 +19,37 @@ pub async fn run(
 
     let informers = Controller::new(config, aggregator).create_informers();
 
-    let cm_informer = informers.configmap.clone();
-    let cm_client = client.clone();
-    let mut cm_handle = tokio::spawn(async move {
-        if let Err(e) = cm_informer.start(cm_client).await {
-            log::error!("ConfigMap informer failed: {}", e);
-        }
-    });
+    // Helper macro to reduce boilerplate — each informer gets a tokio task
+    macro_rules! spawn_informer {
+        ($name:expr, $informer:expr, $client:expr) => {{
+            let informer = $informer.clone();
+            let client = $client.clone();
+            tokio::spawn(async move {
+                if let Err(e) = informer.start(client).await {
+                    log::error!("{} informer failed: {}", $name, e);
+                }
+            })
+        }};
+    }
 
-    let svc_informer = informers.service.clone();
-    let svc_client = client.clone();
-    let mut svc_handle = tokio::spawn(async move {
-        if let Err(e) = svc_informer.start(svc_client).await {
-            log::error!("Service informer failed: {}", e);
-        }
-    });
+    // Existing informers
+    let mut cm_handle = spawn_informer!("ConfigMap", informers.configmap, client);
+    let mut svc_handle = spawn_informer!("Service", informers.service, client);
+    let mut pod_handle = spawn_informer!("Pod", informers.pod, client);
 
-    let pod_informer = informers.pod.clone();
-    let pod_client = client.clone();
-    let mut pod_handle = tokio::spawn(async move {
-        if let Err(e) = pod_informer.start(pod_client).await {
-            log::error!("Pod informer failed: {}", e);
-        }
-    });
+    // Native K8s resources
+    let mut deploy_handle = spawn_informer!("Deployment", informers.deployment, client);
+    let mut rs_handle = spawn_informer!("ReplicaSet", informers.replicaset, client);
+    let mut ingress_handle = spawn_informer!("Ingress", informers.ingress, client);
+    let mut event_handle = spawn_informer!("Event", informers.event, client);
+    let mut hpa_handle = spawn_informer!("HPA", informers.hpa, client);
+    let mut node_handle = spawn_informer!("Node", informers.node, client);
+
+    // CRDs — these will log errors if CRDs aren't installed (expected in dev)
+    let mut rollout_handle = spawn_informer!("Rollout", informers.rollout, client);
+    let mut es_handle = spawn_informer!("ExternalSecret", informers.external_secret, client);
+    let mut hp_handle = spawn_informer!("HTTPProxy", informers.http_proxy, client);
+    let mut vs_handle = spawn_informer!("VirtualService", informers.virtual_service, client);
 
     log::info!("Started all cluster informers");
 
@@ -49,15 +57,22 @@ pub async fn run(
         _ = signal::ctrl_c() => {
             log::info!("Shutdown signal received");
         }
-        res = &mut cm_handle => {
-            log::error!("ConfigMap informer task finished: {:?}", res);
-        }
-        res = &mut svc_handle => {
-            log::error!("Service informer task finished: {:?}", res);
-        }
-        res = &mut pod_handle => {
-            log::error!("Pod informer task finished: {:?}", res);
-        }
+        // Existing
+        res = &mut cm_handle => log::error!("ConfigMap informer task finished: {:?}", res),
+        res = &mut svc_handle => log::error!("Service informer task finished: {:?}", res),
+        res = &mut pod_handle => log::error!("Pod informer task finished: {:?}", res),
+        // Native K8s
+        res = &mut deploy_handle => log::error!("Deployment informer task finished: {:?}", res),
+        res = &mut rs_handle => log::error!("ReplicaSet informer task finished: {:?}", res),
+        res = &mut ingress_handle => log::error!("Ingress informer task finished: {:?}", res),
+        res = &mut event_handle => log::error!("Event informer task finished: {:?}", res),
+        res = &mut hpa_handle => log::error!("HPA informer task finished: {:?}", res),
+        res = &mut node_handle => log::error!("Node informer task finished: {:?}", res),
+        // CRDs
+        res = &mut rollout_handle => log::error!("Rollout informer task finished: {:?}", res),
+        res = &mut es_handle => log::error!("ExternalSecret informer task finished: {:?}", res),
+        res = &mut hp_handle => log::error!("HTTPProxy informer task finished: {:?}", res),
+        res = &mut vs_handle => log::error!("VirtualService informer task finished: {:?}", res),
     }
 
     Ok(())

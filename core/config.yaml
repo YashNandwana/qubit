@@ -11,6 +11,7 @@ db:
   password: "qubit"
   table:
     ebpf_network_events: ebpf_network_events
+    k8s_resource_events: k8s_resource_events
 kubernetes:
   in_cluster: true
   namespace: ""

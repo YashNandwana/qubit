@@ -7,7 +7,7 @@ use moka::sync::Cache;
 use crate::aggregator::k8s_aggregator::PodInfo;
 use crate::config::QubitConfig;
 use crate::dao::DAO;
-use crate::model::{EbpfNetworkEvent, Error};
+use crate::model::{EbpfNetworkEvent, EbpfNetworkEventInput, Error};
 use crate::topology::{Flow, NodeData, NodeId, Topology};
 
 pub struct EbpfAggregator {
@@ -16,7 +16,10 @@ pub struct EbpfAggregator {
     topology: Arc<RwLock<Topology>>,
     pod_cache: Arc<Cache<String, PodInfo>>,
     bulk_addition_data: Arc<RwLock<Vec<EbpfNetworkEvent>>>,
-    ebpf_cache: Arc<Cache<String, HashSet<String>>>,
+    /// Dedup cache: tracks which service→service pairs we've already stored.
+    /// Key: "src_ns/src_svc", Value: set of "dst_ns/dst_svc".
+    /// Prevents duplicate DB rows for the same dependency edge.
+    seen_edges: Arc<RwLock<HashSet<String>>>,
 }
 
 impl EbpfAggregator {
@@ -26,54 +29,77 @@ impl EbpfAggregator {
         topology: Arc<RwLock<Topology>>,
         pod_cache: Arc<Cache<String, PodInfo>>,
     ) -> Self {
-        Self { config,
+        Self {
+            config,
             db,
             topology,
             pod_cache,
             bulk_addition_data: Arc::new(RwLock::new(Vec::new())),
-            ebpf_cache: Arc::new(Cache::builder().build()) 
+            seen_edges: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
-    pub async fn record_ebpf_event(&self, event: EbpfNetworkEvent) -> Result<String, Error> {
-        log::debug!("recorded ebpf event: {}", event);
-
-        if event.path.contains("/health") {
-            return Ok("Skipping health check event!".to_string())
+    pub async fn record_ebpf_event(&self, input: EbpfNetworkEventInput) -> Result<String, Error> {
+        if input.path.contains("/health") {
+            return Ok("Skipping health check event!".to_string());
         }
 
-        let pod_info = self.pod_cache.get(&event.src_ip);
+        // Convert raw u32 IPs to strings for pod cache lookup
+        let src_ip = input.src_ip_str();
+        let dst_ip = input.dst_ip_str();
+
+        // Resolve source: pod cache IP → (service, namespace)
+        let pod_info = self.pod_cache.get(&src_ip);
         let src_namespace = pod_info.as_ref().map(|p| p.namespace.as_str()).unwrap_or("unknown");
-        let src_service = pod_info.as_ref()
+        let src_service = pod_info
+            .as_ref()
             .filter(|p| !p.service_name.is_empty())
             .map(|p| p.service_name.as_str())
-            .unwrap_or(&event.src_ip);
+            .unwrap_or(&src_ip);
 
-        // For destination: try pod cache first (useful when Host header is an IP),
-        // fall back to parsing the Host header (which carries k8s DNS names).
-        let dst_pod_info = self.pod_cache.get(&event.dst_ip);
+        // Resolve destination: pod cache first, fall back to Host header parsing
+        let dst_pod_info = self.pod_cache.get(&dst_ip);
         let (dst_service, dst_namespace) = match dst_pod_info {
             Some(ref info) if !info.service_name.is_empty() => {
                 (info.service_name.clone(), info.namespace.clone())
             }
-            _ => parse_k8s_host(&event.host),
+            _ => parse_k8s_host(&input.host),
         };
 
-        if let Some(destinations) = self.ebpf_cache.get(src_namespace) {
-            if destinations.contains(&dst_namespace) {
-                return Ok("Event Already exist! Skipping DB entry".to_string());
-            }
+        // Dedup: only persist one row per (src_service → dst_service) pair.
+        // The topology still gets the flow, but we don't flood ClickHouse
+        // with thousands of identical dependency edges.
+        let edge_key = format!(
+            "{}/{} -> {}/{}",
+            src_namespace, src_service, dst_namespace, dst_service
+        );
+
+        let is_new_edge = {
+            let mut seen = self.seen_edges
+                .write()
+                .map_err(|_| Error::EbpfEventRecordingFailed("seen_edges lock poisoned".to_string()))?;
+            seen.insert(edge_key)
+        };
+
+        if is_new_edge {
+            let db_event = EbpfNetworkEvent {
+                timestamp_ns: input.timestamp_ns,
+                src_service: src_service.to_string(),
+                src_namespace: src_namespace.to_string(),
+                dst_service: dst_service.clone(),
+                dst_namespace: dst_namespace.clone(),
+                src_port: input.src_port,
+                dst_port: input.dst_port,
+                method: input.method.clone(),
+                path: input.path.clone(),
+                host: input.host.clone(),
+            };
+
+            log::debug!("new edge: {}", db_event);
+            self.insert_bulk_events(db_event).await?;
         }
 
-        // Cache miss — add destination to the source's set
-        let mut destinations = self.ebpf_cache.get(src_namespace).unwrap_or_default();
-        destinations.insert(dst_namespace.clone());
-        self.ebpf_cache.insert(src_namespace.to_string(), destinations);
-
-        // Buffer the event for bulk DB write — must happen before flow
-        // construction, which moves event.path and event.method
-        self.insert_bulk_events(event.clone()).await?;
-
+        // Always update the topology (it deduplicates internally via HashMap keys)
         let source_node = NodeId {
             service_name: src_service.to_string(),
             namespace: src_namespace.to_string(),
@@ -87,25 +113,25 @@ impl EbpfAggregator {
         let flow = Flow {
             source_node: source_node.clone(),
             destination_node: destination_node.clone(),
-            path: event.path,
-            method: event.method,
+            path: input.path,
+            method: input.method,
         };
 
-        // Write new ebpf event into the topology
         {
-            let mut topo = self.topology
+            let mut topo = self
+                .topology
                 .write()
                 .map_err(|_| Error::EbpfEventRecordingFailed("topology lock poisoned".to_string()))?;
 
             topo.add_flow(flow);
 
             topo.add_node(source_node, NodeData {
-                ip: event.src_ip.to_string(),
+                ip: src_ip,
                 ..Default::default()
             });
 
             topo.add_node(destination_node, NodeData {
-                ip: event.dst_ip.to_string(),
+                ip: dst_ip,
                 ..Default::default()
             });
         }

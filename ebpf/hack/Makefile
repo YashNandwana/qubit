@@ -444,17 +444,22 @@ vm-chaos-create:
 	@$(LIMA_CMD) bash -c "kubectl create namespace $(CHAOS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f - && \
 		kubectl apply -f $(CHAOS_MANIFESTS)/configmap.yaml -n $(CHAOS_NAMESPACE) && \
 		kubectl apply -f $(CHAOS_MANIFESTS)/service.yaml -n $(CHAOS_NAMESPACE) && \
-		kubectl apply -f $(CHAOS_MANIFESTS)/pod.yaml -n $(CHAOS_NAMESPACE)"
+		kubectl apply -f $(CHAOS_MANIFESTS)/pod.yaml -n $(CHAOS_NAMESPACE) && \
+		kubectl apply -f $(CHAOS_MANIFESTS)/deployment.yaml -n $(CHAOS_NAMESPACE) && \
+		kubectl apply -f $(CHAOS_MANIFESTS)/hpa.yaml -n $(CHAOS_NAMESPACE)"
 
 .PHONY: vm-chaos-update
 vm-chaos-update:
 	@$(LIMA_CMD) bash -c "\
 		kubectl patch configmap sample-config -n $(CHAOS_NAMESPACE) --type merge -p '{\"data\":{\"UPDATED_KEY\":\"updated-value\"}}' || true && \
-		kubectl patch service sample-service -n $(CHAOS_NAMESPACE) --type merge -p '{\"spec\":{\"ports\":[{\"port\":8080,\"targetPort\":80}]}}' || true"
+		kubectl patch service sample-service -n $(CHAOS_NAMESPACE) --type merge -p '{\"spec\":{\"ports\":[{\"port\":8080,\"targetPort\":80}]}}' || true && \
+		kubectl patch deployment sample-deployment -n $(CHAOS_NAMESPACE) --type merge -p '{\"spec\":{\"replicas\":3}}' || true"
 
 .PHONY: vm-chaos-delete
 vm-chaos-delete:
 	@$(LIMA_CMD) bash -c "\
+		kubectl delete -f $(CHAOS_MANIFESTS)/hpa.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found && \
+		kubectl delete -f $(CHAOS_MANIFESTS)/deployment.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found && \
 		kubectl delete -f $(CHAOS_MANIFESTS)/configmap.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found && \
 		kubectl delete -f $(CHAOS_MANIFESTS)/service.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found && \
 		kubectl delete -f $(CHAOS_MANIFESTS)/pod.yaml -n $(CHAOS_NAMESPACE) --ignore-not-found"

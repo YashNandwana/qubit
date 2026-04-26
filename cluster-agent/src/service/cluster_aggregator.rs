@@ -3,10 +3,12 @@ use std::sync::Arc;
 use tonic::transport::Channel;
 
 use crate::config::ClusterAgentConfig;
+use std::collections::HashMap;
+
 use crate::proto::qubit::event_ingestion_client::EventIngestionClient;
 use crate::proto::qubit::{
-    ConfigMapEventRequest, K8sEventType, PodEventRequest, ServiceEventRequest, ServicePodEntry,
-    ServicePodMapRequest,
+    ConfigMapEventRequest, K8sEventType, K8sResourceEventRequest, PodEventRequest,
+    ServiceEventRequest, ServicePodEntry, ServicePodMapRequest,
 };
 
 pub struct ClusterAggregator {
@@ -98,6 +100,29 @@ impl ClusterAggregator {
             namespace,
             event_type: K8sEventType::Deleted as i32,
         }).await?;
+        Ok(())
+    }
+
+    pub async fn send_k8s_resource_event(
+        &self,
+        resource_type: String,
+        name: String,
+        namespace: String,
+        event_type: K8sEventType,
+        labels: HashMap<String, String>,
+        resource_data: String,
+    ) -> Result<(), tonic::Status> {
+        self.client
+            .clone()
+            .send_k8s_resource_event(K8sResourceEventRequest {
+                resource_type,
+                name,
+                namespace,
+                event_type: event_type as i32,
+                labels,
+                resource_data,
+            })
+            .await?;
         Ok(())
     }
 

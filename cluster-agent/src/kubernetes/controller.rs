@@ -21,6 +21,16 @@ impl Controller {
             factory.create_configmap_informer(),
             factory.create_service_informer(),
             factory.create_pod_informer(),
+            factory.create_deployment_informer(),
+            factory.create_replicaset_informer(),
+            factory.create_ingress_informer(),
+            factory.create_event_informer(),
+            factory.create_hpa_informer(),
+            factory.create_node_informer(),
+            factory.create_rollout_informer(),
+            factory.create_external_secret_informer(),
+            factory.create_http_proxy_informer(),
+            factory.create_virtual_service_informer(),
         )
     }
 }

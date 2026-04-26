@@ -5,7 +5,7 @@ use tonic::{Request, Response, Status};
 use crate::aggregator::{EbpfAggregator, K8sAggregator};
 use crate::config::QubitConfig;
 use crate::dao::DAO;
-use crate::model::EbpfNetworkEventInput;
+use crate::model::{EbpfNetworkEventInput};
 use crate::topology::Topology;
 
 use super::query::QueryServer;
@@ -15,6 +15,7 @@ use super::qubit::{
     ConfigMapEventRequest, ConfigMapEventResponse,
     EbpfNetworkEventRequest, EbpfNetworkEventResponse,
     K8sEventType,
+    K8sResourceEventRequest, K8sResourceEventResponse,
     PodEventRequest, PodEventResponse,
     ServiceEventRequest, ServiceEventResponse,
     ServicePodMapRequest, ServicePodMapResponse,
@@ -29,7 +30,7 @@ pub struct GrpcServer {
 
 impl GrpcServer {
     pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>) -> Self {
-        let k8s_aggregator = Arc::new(K8sAggregator::new(topology.clone()));
+        let k8s_aggregator = Arc::new(K8sAggregator::new(topology.clone(), db.clone()));
         let pod_cache = k8s_aggregator.pod_cache();
         let ebpf_aggregator = Arc::new(EbpfAggregator::new(config.clone(), db, topology, pod_cache));
         Self { config, ebpf_aggregator, k8s_aggregator }
@@ -66,7 +67,7 @@ impl EventIngestion for GrpcServer {
         request: Request<EbpfNetworkEventRequest>,
     ) -> Result<Response<EbpfNetworkEventResponse>, Status> {
         let req = request.into_inner();
-        let event = EbpfNetworkEventInput {
+        let input = EbpfNetworkEventInput {
             timestamp_ns: req.timestamp_ns,
             src_ip: req.src_ip,
             dst_ip: req.dst_ip,
@@ -75,11 +76,11 @@ impl EventIngestion for GrpcServer {
             method: req.method,
             path: req.path,
             host: req.host,
-        }.into_event();
+        };
 
         let aggregator = self.ebpf_aggregator.clone();
         tokio::spawn(async move {
-            let _ = aggregator.record_ebpf_event(event).await;
+            let _ = aggregator.record_ebpf_event(input).await;
         });
 
         Ok(Response::new(EbpfNetworkEventResponse {
@@ -167,6 +168,40 @@ impl EventIngestion for GrpcServer {
         Ok(Response::new(ServicePodMapResponse {
             success: true,
             message: format!("Applied {} service entries", count),
+        }))
+    }
+
+    async fn send_k8s_resource_event(
+        &self,
+        request: Request<K8sResourceEventRequest>,
+    ) -> Result<Response<K8sResourceEventResponse>, Status> {
+        let req = request.into_inner();
+        let event_type_str = match K8sEventType::try_from(req.event_type) {
+            Ok(K8sEventType::Applied) => "Applied",
+            Ok(K8sEventType::Deleted) => "Deleted",
+            Err(_) => return Err(Status::invalid_argument("unknown event type")),
+        };
+
+        log::debug!(
+            "{} {}: {}/{}",
+            req.resource_type,
+            event_type_str,
+            req.namespace,
+            req.name
+        );
+
+        self.k8s_aggregator.record_k8s_resource_event(
+            &req.resource_type,
+            &req.name,
+            &req.namespace,
+            event_type_str,
+            &req.labels,
+            &req.resource_data,
+        );
+
+        Ok(Response::new(K8sResourceEventResponse {
+            success: true,
+            message: "ok".to_string(),
         }))
     }
 }

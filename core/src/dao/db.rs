@@ -4,7 +4,7 @@ use futures::TryFutureExt;
 use std::sync::Arc;
 
 use crate::config::QubitConfig;
-use crate::model::{EbpfNetworkEvent, Error};
+use crate::model::{EbpfNetworkEvent, K8sResourceEvent, Error};
 
 pub struct DAO {
     config: Arc<QubitConfig>,
@@ -25,16 +25,33 @@ impl DAO {
     }
 
     pub async fn initialize_schema(&self) -> Result<(), Error> {
-        let create_table_query = format!(
+        let create_ebpf_table = format!(
             "CREATE TABLE IF NOT EXISTS {} ({})
             ENGINE = MergeTree()
-            ORDER BY (timestamp_ns, src_ip, dst_ip)",
+            ORDER BY (timestamp_ns, src_service, dst_service)",
             self.config.db.table.ebpf_network_events,
             EbpfNetworkEvent::CREATE_TABLE_SCHEMA
-        );      
+        );
 
         self.client
-            .query(&create_table_query)
+            .query(&create_ebpf_table)
+            .execute()
+            .await
+            .map_err(|e| Error::SchemaInitializationFailed(e.to_string()))?;
+
+        // K8s resource events table with 1 day TTL.
+        // ClickHouse automatically drops expired rows during background merges.
+        let create_k8s_table = format!(
+            "CREATE TABLE IF NOT EXISTS {} ({})
+            ENGINE = MergeTree()
+            ORDER BY (event_time, namespace, resource_type)
+            TTL event_time + INTERVAL 1 DAY",
+            self.config.db.table.k8s_resource_events,
+            K8sResourceEvent::CREATE_TABLE_SCHEMA
+        );
+
+        self.client
+            .query(&create_k8s_table)
             .execute()
             .await
             .map_err(|e| Error::SchemaInitializationFailed(e.to_string()))?;
@@ -67,6 +84,18 @@ impl DAO {
         for event in events {
             insert.write(&event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         }
+        insert.end().await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn add_k8s_resource_event(&self, event: K8sResourceEvent) -> Result<(), Error> {
+        let mut insert: Insert<K8sResourceEvent> = self
+            .client
+            .insert(&self.config.db.table.k8s_resource_events)
+            .await
+            .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+
+        insert.write(&event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         insert.end().await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         Ok(())
     }

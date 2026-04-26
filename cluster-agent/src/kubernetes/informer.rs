@@ -29,6 +29,16 @@ pub enum InformerType {
     Service,
     ConfigMap,
     Pod,
+    Deployment,
+    ReplicaSet,
+    Ingress,
+    Event,
+    Hpa,
+    Node,
+    Rollout,
+    ExternalSecret,
+    HttpProxy,
+    VirtualService,
 }
 
 pub struct InformerGeneric<K, H>
