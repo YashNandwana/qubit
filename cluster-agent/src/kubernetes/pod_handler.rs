@@ -25,10 +25,13 @@ impl EventHandler<Pod> for PodHandler {
                 .registry
                 .find_service_for_pod(pod)
                 .unwrap_or_default();
+
+            let application_name = resolve_application_name(pod, &service_name);
+
             let aggregator = self.aggregator.clone();
             tokio::spawn(async move {
                 if let Err(e) = aggregator
-                    .send_pod_applied(ip.clone(), namespace, service_name, service_type)
+                    .send_pod_applied(ip.clone(), namespace, application_name, service_name, service_type)
                     .await
                 {
                     log::error!("Failed to send pod applied (ip={}): {}", ip, e);
@@ -67,4 +70,23 @@ fn pod_ip_and_namespace(pod: &Pod) -> Option<(String, String)> {
 
 fn pod_ip(pod: &Pod) -> Option<String> {
     pod.status.as_ref()?.pod_ip.clone()
+}
+
+fn resolve_application_name(pod: &Pod, service_name: &str) -> String {
+    if !service_name.is_empty() {
+        return service_name.to_string();
+    }
+
+    let labels = pod.metadata.labels.as_ref();
+    if let Some(name) = labels.and_then(|l| l.get("app.kubernetes.io/name")) {
+        return name.clone();
+    }
+    if let Some(name) = labels.and_then(|l| l.get("app.k8s.io/name")) {
+        return name.clone();
+    }
+    if let Some(name) = labels.and_then(|l| l.get("app")) {
+          return name.clone();
+    }
+    pod.metadata.name.clone().unwrap_or_default()
+    
 }

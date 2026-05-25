@@ -6,8 +6,6 @@ Qubit automatically discovers and maps service-to-service HTTP dependencies in K
 
 ## Architecture
 
-Qubit consists of three components that work together:
-
 ```
                          Kubernetes Cluster
  ┌──────────────────────────────────────────────────────────────────────┐
@@ -17,49 +15,61 @@ Qubit consists of three components that work together:
  │                                                                      │
  │   Kernel ──► ebpf-loader              Watches K8s API:               │
  │   • Captures HTTP packets             • Pods (IP ↔ service mapping)  │
- │   • Extracts method, path, host       • Services (selectors)         │
- │   • Sends events via gRPC             • ConfigMaps                   │
- │                                                                      │
+ │   • Extracts method, path, host       • Services, ConfigMaps         │
+ │   • Sends events via gRPC             • Deployments, Ingresses, etc. │
+ │                                       • Parses envoy.yaml ConfigMap  │
+ │                                         → domain → service routes    │
  └──────────┬───────────────────────────────────────┬───────────────────┘
             │ gRPC :50051                           │ gRPC :50051
             │ SendEbpfNetworkEvent                  │ SendPodEvent
-            │                                       │ SendServiceEvent
+            │                                       │ SendServicePodMap
+            │                                       │ SendEnvoyRoutes
+            │                                       │ SendK8sResourceEvent
             ▼                                       ▼
      ┌─────────────────────────────────────────────────────┐
      │                     Core                             │
      │                                                      │
      │  EventIngestion (write path)                         │
      │  • EbpfAggregator ─── batch buffer ──► ClickHouse   │
-     │  • K8sAggregator ──── pod cache                     │
-     │  • Topology graph (in-memory)                       │
+     │    └── destination resolution (3-tier):              │
+     │        1. EnvoyDomainCache (Host → service)          │
+     │        2. Pod cache (dst IP → service)               │
+     │        3. parse_k8s_host (DNS name heuristic)        │
+     │  • K8sAggregator ──── pod cache + topology          │
      │                                                      │
      │  QubitQuery (read path)                              │
      │  • GetTopology ──► nodes, upstream, downstream      │
      │                                                      │
-     │  HTTP :9000                                          │
-     │  • /ping (health check)                             │
+     │  HTTP :9000  /ping                                   │
+     └──────────────────────────┬──────────────────────────┘
+                                │ gRPC + ClickHouse queries
+                                ▼
+     ┌─────────────────────────────────────────────────────┐
+     │                  MCP Server                          │
+     │                                                      │
+     │  stdio JSON-RPC (Model Context Protocol)            │
+     │  • get_topology          full service graph          │
+     │  • get_service_dependencies  per-service view        │
+     │  • get_k8s_events        recent K8s resource events │
+     │  • get_network_events    raw eBPF HTTP traffic       │
      └─────────────────────────────────────────────────────┘
+                                ▲
+                                │ Claude Code / AI client
 ```
 
-**Data flow:** eBPF captures raw HTTP packets on each node and sends them to Core via gRPC. The Cluster Agent watches the Kubernetes API for pod and service metadata, sending it to Core's pod cache. Core correlates the two — enriching raw IP-based events with service names and namespaces — and builds an in-memory topology graph. Clients query the topology via the `QubitQuery` gRPC service.
+**Data flow:**
 
-## How It Works
+1. **Capture** — An eBPF socket filter attaches to each node's network interface and captures outbound HTTP packets. The userspace loader extracts source/destination IPs, ports, HTTP method, path, and Host header, then forwards events to Core via gRPC.
 
-**1. Capture** — An eBPF socket filter attaches to each node's network interface and captures HTTP L7 packets. The userspace loader extracts source/destination IPs, ports, HTTP method, path, and Host header.
+2. **Enrich (pod metadata)** — The Cluster Agent watches the Kubernetes API for pod and service events. It matches pods to services via label selectors and sends IP → service mappings to Core. On startup and every 30 seconds it re-sends the full map so Core recovers correctly after a restart.
 
-**2. Enrich** — The Cluster Agent watches the Kubernetes API for pod and service events. It matches pods to services via label selectors and sends the IP → service mappings to Core. Core maintains a pod cache that maps raw IPs to service names.
+3. **Enrich (Envoy routes)** — When the Cluster Agent sees a ConfigMap containing an `envoy.yaml` key, it parses the Envoy static config — extracting cluster endpoint FQDNs and virtual host domains — and pushes the domain → service mappings to Core via `SendEnvoyRoutes`. This means services routed through an Envoy proxy (where the Host header is a virtual hostname, not a K8s FQDN) resolve correctly with no manual setup.
 
-**3. Correlate** — When an eBPF event arrives, Core resolves the source IP via the pod cache and the destination via the Host header (e.g., `service-b.default.svc.cluster.local` → service-b in namespace default). If events arrive before the pod cache is populated, the topology self-heals when the mapping arrives later.
+4. **Correlate** — When an eBPF event arrives, Core resolves the source IP via the pod cache (drops the event if the IP is not yet known, preventing raw IPs from leaking into the topology). The destination is resolved in priority order: Envoy cache → pod cache → K8s DNS name heuristic.
 
-**4. Store** — Events are buffered and batch-written to ClickHouse. The in-memory topology graph tracks nodes (services), upstream flows (who calls this service?), and downstream flows (what does this service call?).
+5. **Store** — Events are buffered and batch-written to ClickHouse. The in-memory topology graph tracks nodes (services), upstream flows (who calls this service?), and downstream flows (what does this service call?). Each service pair is deduplicated — only the first event per edge is persisted and added to the graph.
 
-**5. Query** — The `QubitQuery` gRPC service exposes the full topology graph:
-
-```bash
-grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
-```
-
-Returns nodes, upstream, and downstream maps keyed by `namespace/service_name`.
+6. **Query** — The `QubitQuery` gRPC service exposes the full topology graph.
 
 ## Project Structure
 
@@ -68,14 +78,16 @@ qubit/
 ├── core/                        # Aggregation server (runs on host or as Deployment)
 │   ├── src/
 │   │   ├── main.rs              # Entry point — wires up servers, DB, topology
+│   │   ├── lib.rs               # Library root (used by load-tests)
 │   │   ├── aggregator/
-│   │   │   ├── ebpf_aggregator  # Processes eBPF events, manages batch buffer
-│   │   │   └── k8s_aggregator   # Pod/service metadata cache, topology healing
+│   │   │   ├── ebpf_aggregator  # Processes eBPF events, destination resolution
+│   │   │   └── k8s_aggregator   # Pod/service cache, topology healing
 │   │   ├── server/
-│   │   │   ├── grpc.rs          # EventIngestion service (write path)
-│   │   │   ├── query.rs         # QubitQuery service (read path)
-│   │   │   ├── http.rs          # Health endpoint
-│   │   │   └── factory.rs       # Server construction
+│   │   │   ├── grpc.rs          # EventIngestion + QubitQuery gRPC handlers
+│   │   │   ├── http.rs          # Health endpoint (/ping)
+│   │   │   ├── factory.rs       # Server construction
+│   │   │   └── query.rs         # Read-path query handler
+│   │   ├── envoy/               # EnvoyDomainCache (populated by cluster-agent)
 │   │   ├── topology/            # In-memory service dependency graph
 │   │   ├── dao/                 # ClickHouse persistence
 │   │   ├── config/              # YAML config
@@ -85,19 +97,21 @@ qubit/
 │
 ├── cluster-agent/               # K8s metadata collector (runs in-cluster)
 │   ├── src/
-│   │   ├── main.rs              # Entry point — creates K8s client, starts informers
 │   │   ├── kubernetes/
 │   │   │   ├── informer.rs      # Generic K8s resource watcher (EventHandler trait)
-│   │   │   ├── informer_factory # Creates typed informers for Pod/Service/ConfigMap
+│   │   │   ├── informer_factory # Typed informers (Pod, Service, ConfigMap,
+│   │   │   │                    #   Deployment, ReplicaSet, Ingress, HPA, Node,
+│   │   │   │                    #   Rollout, ExternalSecret, HTTPProxy, VirtualService)
+│   │   │   ├── configmap_handler# Detects envoy.yaml → triggers route push
+│   │   │   ├── envoy_parser     # Parses Envoy static YAML → domain→service mappings
 │   │   │   ├── service_registry # In-memory cache of service selectors
 │   │   │   ├── pod_handler      # Maps pods to services via label matching
-│   │   │   ├── service_handler  # Tracks service selector changes
-│   │   │   └── configmap_handler
+│   │   │   └── service_handler  # Tracks service selector changes
 │   │   └── service/
 │   │       └── cluster_aggregator  # gRPC client to Core
 │   └── proto/qubit.proto
 │
-├── ebpf/                        # eBPF kernel program (socket filter)
+├── ebpf/                        # eBPF kernel program (TC socket filter)
 │   └── src/main.rs
 │
 ├── ebpf-loader/                 # Userspace eBPF loader daemon
@@ -106,13 +120,26 @@ qubit/
 │       ├── service/             # gRPC client to Core
 │       └── config/
 │
-├── ebpf-common/                 # Shared types between eBPF and loader
+├── ebpf-common/                 # Shared types between eBPF kernel and loader
+│
+├── load-tests/                  # Traffic generator
+│   └── src/main.rs              # Two streams: K8s events + HTTP traffic
+│                                # Run via: make -C ebpf/hack vm-load-gen
+│
+├── mcp-server/                  # MCP server (AI assistant interface)
+│   └── src/
+│       ├── main.rs              # stdio JSON-RPC transport
+│       ├── tools.rs             # MCP tool definitions
+│       ├── grpc_client.rs       # Wraps Core's QubitQuery gRPC service
+│       ├── ch_client.rs         # Queries ClickHouse for raw events
+│       └── config.rs
 │
 └── ebpf/hack/                   # K8s manifests and dev tooling
     └── k8s/
         ├── ebpf-daemonset.yaml  # eBPF loader DaemonSet
         ├── cluster-agent.yaml   # Cluster Agent Deployment + RBAC
-        └── test-pods.yaml       # Test services (service-a → service-b)
+        ├── envoy-proxy.yaml     # Envoy proxy + ConfigMap (static config)
+        └── test-pods.yaml       # Test services (service-a → service-b via Envoy)
 ```
 
 ## Prerequisites
@@ -122,6 +149,7 @@ qubit/
 - **ClickHouse** — for event persistence
 - **Lima** — for local K8s development on macOS (`brew install lima`)
 - **Kind** — Kubernetes in Docker (installed inside Lima VM)
+- **Docker** — for ClickHouse and eBPF bytecode compilation
 - **grpcurl** — for testing gRPC services (`brew install grpcurl`)
 
 ## Quick Start
@@ -129,13 +157,12 @@ qubit/
 ### 1. Start Core (macOS)
 
 ```bash
-# Start ClickHouse
 make -C core/hack core-up
 ```
 
-This starts ClickHouse via Docker Compose and runs the Core server. Core listens on:
+Starts ClickHouse via Docker Compose and runs Core. Listens on:
 - `localhost:50051` — gRPC (EventIngestion + QubitQuery)
-- `localhost:9000/ping` — HTTP health check
+- `localhost:9000` — HTTP health check
 
 ### 2. Deploy to Kind cluster (Lima VM)
 
@@ -143,62 +170,61 @@ This starts ClickHouse via Docker Compose and runs the Core server. Core listens
 # One-time setup
 make -C ebpf/hack lima-create        # Create Ubuntu VM with Docker + Kind
 make -C ebpf/hack vm-setup           # Install Rust toolchain in VM
+make -C ebpf/hack build-ebpf         # Compile eBPF bytecode (via Docker, macOS)
+make -C ebpf/hack vm-cluster-create  # Create Kind cluster
+make -C ebpf/hack vm-envoy-pull      # Pre-load Envoy image into Kind
 
-# Build eBPF bytecode (runs on macOS via Docker)
-make -C ebpf/hack build-ebpf
-
-# Full deploy: Kind cluster + eBPF loader + cluster-agent + test pods
+# Full first-time deploy
 make -C ebpf/hack vm-test
 ```
 
-This creates a Kind cluster inside the Lima VM with:
+Deploys into Kind:
 - **eBPF DaemonSet** — captures HTTP traffic on every node
-- **Cluster Agent** — watches pods/services, sends metadata to Core
-- **Test pods** — `service-a` (curl client) calls `service-b` (nginx) every 5 seconds
+- **Cluster Agent** — watches pods/services/ConfigMaps, sends metadata and Envoy routes to Core
+- **Envoy proxy** — routes traffic between test services
+- **Test pods** — `service-a` (curl) calls `service-b` (nginx) through Envoy every 5 seconds
 
-### 3. Query the topology
-
-```bash
-grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
-```
-
-You should see `service-a` calling `service-b` and `httpbin.org`:
-
-```json
-{
-  "nodes": {
-    "default/service-a": { "serviceName": "service-a", "namespace": "default", "ip": "10.244.0.32" },
-    "default/service-b": { "serviceName": "service-b", "namespace": "default", "ip": "10.244.0.33" }
-  },
-  "downstream": {
-    "default/service-a": {
-      "flows": [
-        { "sourceService": "service-a", "destinationService": "service-b", "method": "GET", "path": "/" },
-        { "sourceService": "service-a", "destinationService": "httpbin", "method": "GET", "path": "/get" }
-      ]
-    }
-  }
-}
-```
-
-### 4. Iterate
+### 3. Iterate
 
 ```bash
 # Rebuild and redeploy after code changes
 make -C ebpf/hack vm-redeploy
 
-# View eBPF logs
-make -C ebpf/hack vm-logs
-
 # Check pod status
 make -C ebpf/hack vm-status
 
-# Chaos testing (create/update/delete K8s objects in a loop)
-make -C ebpf/hack vm-chaos
+# Follow eBPF loader logs
+make -C ebpf/hack vm-logs
 
-# Tear down
-make -C ebpf/hack vm-cleanup
+# Generate load (K8s events + HTTP traffic)
+make -C ebpf/hack vm-load-gen
+make -C ebpf/hack vm-load-gen K8S_RPS=50 HTTP_RPS=100 DURATION=120
 ```
+
+### 4. Query the topology
+
+```bash
+grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
+```
+
+Expected: `service-a → service-b` (not `service-a → envoy-proxy`). The Envoy route resolution maps the `envoy-proxy.default.svc` Host header back to `service-b`.
+
+## Local Dev Architecture
+
+```
+ macOS Host                          Lima VM (Ubuntu)
+┌─────────────────┐                ┌─────────────────────────────┐
+│                 │                │  Kind Cluster (qubit-test)  │
+│  Core           │◄── gRPC ──────│   ├── eBPF DaemonSet        │
+│  (cargo run)    │    :50051     │   ├── Cluster Agent          │
+│                 │                │   ├── Envoy proxy            │
+│  ClickHouse     │                │   ├── service-a (curl)       │
+│  (Docker)       │                │   └── service-b (nginx)      │
+└─────────────────┘                └─────────────────────────────┘
+   192.168.5.2                        192.168.5.15
+```
+
+Core runs natively on macOS for fast iteration. The Kind cluster inside the Lima VM hosts the eBPF DaemonSet (needs Linux kernel access), the Cluster Agent, Envoy, and test workloads. All in-cluster components reach Core at `192.168.5.2:50051` (Mac host gateway).
 
 ## Configuration
 
@@ -218,6 +244,7 @@ db:
   password: "qubit"
   table:
     ebpf_network_events: ebpf_network_events
+    k8s_resource_events: k8s_resource_events
 ```
 
 ### Cluster Agent (`cluster-agent/config.yaml`)
@@ -246,24 +273,79 @@ ebpf_path: "/app/ebpf-bytecode"
 
 ### Write Path — `EventIngestion`
 
-| RPC | Description |
-|-----|-------------|
-| `SendEbpfNetworkEvent` | HTTP traffic event from eBPF loader |
-| `SendPodEvent` | Pod created/deleted from cluster-agent |
-| `SendServiceEvent` | Service created/deleted from cluster-agent |
-| `SendConfigMapEvent` | ConfigMap created/deleted from cluster-agent |
-| `SendServicePodMap` | Bulk pod-service mapping (initial sync) |
+| RPC | Sender | Description |
+|-----|--------|-------------|
+| `SendEbpfNetworkEvent` | eBPF loader | HTTP packet event (src/dst IP, method, path, host) |
+| `SendPodEvent` | cluster-agent | Pod created/deleted |
+| `SendServiceEvent` | cluster-agent | Service created/deleted |
+| `SendConfigMapEvent` | cluster-agent | ConfigMap created/deleted |
+| `SendServicePodMap` | cluster-agent | Bulk pod→service mapping (startup + 30s resync) |
+| `SendK8sResourceEvent` | cluster-agent | Generic K8s resource event (Deployment, Ingress, etc.) |
+| `SendEnvoyRoutes` | cluster-agent | Domain→service mappings parsed from Envoy ConfigMap |
 
 ### Read Path — `QubitQuery`
 
 | RPC | Description |
 |-----|-------------|
-| `GetTopology` | Returns full service dependency graph |
+| `GetTopology` | Full service dependency graph — nodes, upstream, downstream |
 
-`GetTopologyResponse` contains:
-- **`nodes`** — All known services, keyed by `namespace/service_name`
-- **`upstream`** — For each service: who calls it (keyed by destination)
-- **`downstream`** — For each service: what it calls (keyed by source)
+## MCP Server
+
+Exposes Qubit's data to AI assistants via the [Model Context Protocol](https://modelcontextprotocol.io) over stdio JSON-RPC.
+
+### Configuration (`mcp-server/config.yaml`)
+
+```yaml
+qubit_core:
+  grpc_address: "http://localhost:50051"
+
+clickhouse:
+  host: localhost
+  port: 8123
+  user: default
+  password: "qubit"
+  database: default
+  ebpf_table: ebpf_network_events
+  k8s_table: k8s_events
+```
+
+### Claude Code Integration
+
+The project ships a `.mcp.json` that points Claude Code at the compiled binary:
+
+```bash
+cargo build -p qubit-mcp
+# Update .mcp.json with the binary path — Claude Code picks it up on next launch.
+```
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_topology` | Full service dependency graph |
+| `get_service_dependencies` | Upstream/downstream for a single service |
+| `get_k8s_events` | Recent Kubernetes resource events |
+| `get_network_events` | Raw eBPF-captured HTTP traffic |
+
+## Load Generator
+
+`load-tests` is a simple traffic generator with two configurable streams:
+
+| Stream | What it does | What it exercises |
+|--------|-------------|-------------------|
+| K8s (`--k8s-rps`) | Creates/patches/deletes ConfigMaps | cluster-agent informers → Core |
+| HTTP (`--http-rps`) | GET requests to service-b | eBPF capture → Core |
+
+```bash
+# Default: 10 k8s/s + 20 http/s for 60s
+make -C ebpf/hack vm-load-gen
+
+# Custom rates
+make -C ebpf/hack vm-load-gen K8S_RPS=50 HTTP_RPS=100 DURATION=120
+
+# Or directly from the Lima VM shell
+cd load-tests && cargo run --release --bin load-gen -- --k8s-rps 50 --http-rps 100
+```
 
 ## Tech Stack
 
@@ -278,21 +360,5 @@ ebpf_path: "/app/ebpf-bytecode"
 | Database | ClickHouse |
 | Caching | Moka |
 | Errors | thiserror + anyhow |
+| MCP framework | rmcp |
 | Dev environment | Lima + Kind |
-
-## Local Dev Architecture
-
-```
- macOS Host                          Lima VM (Ubuntu)
-┌─────────────────┐                ┌─────────────────────────────┐
-│                 │                │  Kind Cluster (qubit-test)  │
-│  Core           │◄── gRPC ──────│   ├── eBPF DaemonSet        │
-│  (cargo run)    │    :50051     │   ├── Cluster Agent          │
-│                 │                │   ├── service-a (curl)       │
-│  ClickHouse     │                │   └── service-b (nginx)      │
-│  (Docker)       │                │                               │
-└─────────────────┘                └─────────────────────────────┘
-   192.168.5.2                        192.168.5.15
-```
-
-Core runs natively on macOS for fast iteration. The Kind cluster inside the Lima VM hosts the eBPF DaemonSet (needs Linux kernel access), the Cluster Agent, and test workloads. All in-cluster components reach Core at `192.168.5.2:50051` (Mac host gateway).

@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "core",
+    "cluster-agent",
+    "ebpf-loader",
+    "ebpf-common",
+    "mcp-server",
+    "load-tests",
+]
+# ebpf is excluded: it targets bpfel-unknown-none (no_std kernel target)
+# and cannot be compiled for the host. Build it separately with:
+#   cargo build --manifest-path ebpf/Cargo.toml -Z build-std=core --target bpfel-unknown-none
+resolver = "2"

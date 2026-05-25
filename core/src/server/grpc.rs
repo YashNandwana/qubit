@@ -5,6 +5,7 @@ use tonic::{Request, Response, Status};
 use crate::aggregator::{EbpfAggregator, K8sAggregator};
 use crate::config::QubitConfig;
 use crate::dao::DAO;
+use crate::envoy::{EnvoyDomainCache};
 use crate::model::{EbpfNetworkEventInput};
 use crate::topology::Topology;
 
@@ -14,6 +15,7 @@ use super::qubit::qubit_query_server::QubitQueryServer;
 use super::qubit::{
     ConfigMapEventRequest, ConfigMapEventResponse,
     EbpfNetworkEventRequest, EbpfNetworkEventResponse,
+    EnvoyRoutesRequest, EnvoyRoutesResponse,
     K8sEventType,
     K8sResourceEventRequest, K8sResourceEventResponse,
     PodEventRequest, PodEventResponse,
@@ -26,14 +28,15 @@ pub struct GrpcServer {
     config: Arc<QubitConfig>,
     ebpf_aggregator: Arc<EbpfAggregator>,
     k8s_aggregator: Arc<K8sAggregator>,
+    envoy_cache: Arc<EnvoyDomainCache>,
 }
 
 impl GrpcServer {
-    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>) -> Self {
+    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>, cache: Arc<EnvoyDomainCache>) -> Self {
         let k8s_aggregator = Arc::new(K8sAggregator::new(topology.clone(), db.clone()));
         let pod_cache = k8s_aggregator.pod_cache();
-        let ebpf_aggregator = Arc::new(EbpfAggregator::new(config.clone(), db, topology, pod_cache));
-        Self { config, ebpf_aggregator, k8s_aggregator }
+        let ebpf_aggregator = Arc::new(EbpfAggregator::new(config.clone(), db, topology, pod_cache, Arc::clone(&cache)));
+        Self { config, ebpf_aggregator, k8s_aggregator, envoy_cache: cache }
     }
 
     pub async fn do_serve(self, query_server: QueryServer) -> Result<(), String> {
@@ -103,6 +106,7 @@ impl EventIngestion for GrpcServer {
                 self.k8s_aggregator.record_pod_applied(
                     &req.pod_ip,
                     &req.namespace,
+                    &req.application_name,
                     &req.service_name,
                     &req.service_type,
                 );
@@ -159,6 +163,7 @@ impl EventIngestion for GrpcServer {
                 self.k8s_aggregator.record_pod_applied(
                     pod_ip,
                     &entry.namespace,
+                    &entry.application_name,
                     &entry.service_name,
                     &entry.service_type,
                 );
@@ -202,6 +207,22 @@ impl EventIngestion for GrpcServer {
         Ok(Response::new(K8sResourceEventResponse {
             success: true,
             message: "ok".to_string(),
+        }))
+    }
+
+    async fn send_envoy_routes(
+        &self,
+        request: Request<EnvoyRoutesRequest>,
+    ) -> Result<Response<EnvoyRoutesResponse>, Status> {
+        let entries = request.into_inner().entries;
+        let count = entries.len();
+        for entry in entries {
+            self.envoy_cache.insert(entry.domain, entry.service_name, entry.namespace);
+        }
+        log::info!("Envoy routes applied: {} entries", count);
+        Ok(Response::new(EnvoyRoutesResponse {
+            success: true,
+            message: format!("Applied {} entries", count),
         }))
     }
 }

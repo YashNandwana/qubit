@@ -8,6 +8,7 @@ service EventIngestion {
   rpc SendConfigMapEvent(ConfigMapEventRequest)     returns (ConfigMapEventResponse);
   rpc SendServicePodMap(ServicePodMapRequest)       returns (ServicePodMapResponse);
   rpc SendK8sResourceEvent(K8sResourceEventRequest) returns (K8sResourceEventResponse);
+  rpc SendEnvoyRoutes(EnvoyRoutesRequest)           returns (EnvoyRoutesResponse);
 }
 
 message EbpfNetworkEventRequest {
@@ -35,8 +36,9 @@ message PodEventRequest {
   string pod_ip       = 1;
   string namespace    = 2;
   K8sEventType event_type = 3;
-  string service_name = 4;
-  string service_type = 5;
+  string application_name = 4;
+  string service_name = 5;
+  string service_type = 6;
 }
 
 message PodEventResponse {
@@ -82,11 +84,27 @@ message K8sResourceEventResponse {
   string message = 2;
 }
 
+message EnvoyRouteEntry {
+  string domain       = 1;
+  string service_name = 2;
+  string namespace    = 3;
+}
+
+message EnvoyRoutesRequest {
+  repeated EnvoyRouteEntry entries = 1;
+}
+
+message EnvoyRoutesResponse {
+  bool   success = 1;
+  string message = 2;
+}
+
 message ServicePodEntry {
   string service_name  = 1;
   string namespace     = 2;
   string service_type  = 3;
   repeated string pod_ips = 4;
+  string application_name = 5;
 }
 
 message ServicePodMapRequest {

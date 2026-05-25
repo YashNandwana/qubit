@@ -5,10 +5,12 @@ use tonic::transport::Channel;
 use crate::config::ClusterAgentConfig;
 use std::collections::HashMap;
 
+use crate::kubernetes::EnvoyRoute;
 use crate::proto::qubit::event_ingestion_client::EventIngestionClient;
 use crate::proto::qubit::{
-    ConfigMapEventRequest, K8sEventType, K8sResourceEventRequest, PodEventRequest,
-    ServiceEventRequest, ServicePodEntry, ServicePodMapRequest,
+    ConfigMapEventRequest, EnvoyRouteEntry, EnvoyRoutesRequest, K8sEventType,
+    K8sResourceEventRequest, PodEventRequest, ServiceEventRequest, ServicePodEntry,
+    ServicePodMapRequest,
 };
 
 pub struct ClusterAggregator {
@@ -33,12 +35,14 @@ impl ClusterAggregator {
         &self,
         pod_ip: String,
         namespace: String,
+        application_name: String,
         service_name: String,
         service_type: String,
     ) -> Result<(), tonic::Status> {
         self.client.clone().send_pod_event(PodEventRequest {
             pod_ip,
             namespace,
+            application_name,
             service_name,
             service_type,
             event_type: K8sEventType::Applied as i32,
@@ -50,6 +54,7 @@ impl ClusterAggregator {
         self.client.clone().send_pod_event(PodEventRequest {
             pod_ip,
             namespace: String::new(),
+            application_name: String::new(),
             service_name: String::new(),
             service_type: String::new(),
             event_type: K8sEventType::Deleted as i32,
@@ -134,6 +139,7 @@ impl ClusterAggregator {
             entries: entries
                 .into_iter()
                 .map(|(service_name, namespace, service_type, pod_ips)| ServicePodEntry {
+                    application_name: service_name.clone(),
                     service_name,
                     namespace,
                     service_type,
@@ -141,6 +147,19 @@ impl ClusterAggregator {
                 })
                 .collect(),
         }).await?;
+        Ok(())
+    }
+
+    pub async fn send_envoy_routes(&self, routes: Vec<EnvoyRoute>) -> Result<(), tonic::Status> {
+        let entries = routes
+            .into_iter()
+            .map(|r| EnvoyRouteEntry {
+                domain: r.domain,
+                service_name: r.service_name,
+                namespace: r.namespace,
+            })
+            .collect();
+        self.client.clone().send_envoy_routes(EnvoyRoutesRequest { entries }).await?;
         Ok(())
     }
 }

@@ -3,18 +3,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ping-service-a
+  name: service-a
   labels:
-    app: ping-service-a
+    app: service-a
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ping-service-a
+      app: service-a
   template:
     metadata:
       labels:
-        app: ping-service-a
+        app: service-a
     spec:
       containers:
       - name: pinger
@@ -26,8 +26,8 @@ spec:
           echo "Starting ping-service-a with HTTP requests..."
           while true; do
             echo "=== $(date) ==="
-            echo "HTTP to service-b..."
-            curl -s -o /dev/null -w "%{http_code}" http://service-b.default.svc:80/ 2>/dev/null || echo "failed"
+            echo "HTTP to envoy-proxy (→ service-b)..."
+            curl -s -o /dev/null -w "%{http_code}" http://envoy-proxy.default.svc:80/ 2>/dev/null || echo "failed"
             echo ""
             echo "HTTP to httpbin..."
             curl -s -o /dev/null -w "%{http_code}" http://httpbin.org/get 2>/dev/null || echo "failed"
@@ -45,7 +45,7 @@ metadata:
   name: service-a
 spec:
   selector:
-    app: ping-service-a
+    app: service-a
   ports:
   - port: 80
     targetPort: 80
@@ -54,18 +54,18 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ping-service-b
+  name: service-b
   labels:
-    app: ping-service-b
+    app: service-b
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ping-service-b
+      app: service-b
   template:
     metadata:
       labels:
-        app: ping-service-b
+        app: service-b
     spec:
       containers:
       - name: http-server
@@ -83,7 +83,7 @@ metadata:
   name: service-b
 spec:
   selector:
-    app: ping-service-b
+    app: service-b
   ports:
   - port: 80
     targetPort: 80

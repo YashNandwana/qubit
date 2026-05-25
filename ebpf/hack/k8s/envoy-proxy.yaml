@@ -1,0 +1,116 @@
+---
+# Envoy proxy: listens on :8080 (no root needed), forwards to service-b.
+# The K8s Service maps external port 80 → pod port 8080 transparently.
+# eBPF already captures dst_port 8080, so both hops are visible:
+#   ping-service-a → envoy-proxy → service-b
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+      - name: listener_0
+        address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8080
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: ingress_http
+              codec_type: AUTO
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: backend
+                  domains:
+                    - "envoy-proxy"
+                    - "envoy-proxy.default"
+                    - "envoy-proxy.default.svc"
+                    - "envoy-proxy.default.svc.cluster.local"
+                  routes:
+                  - match:
+                      prefix: "/"
+                    route:
+                      cluster: service_b
+                      host_rewrite_literal: service-b.default.svc.cluster.local
+              http_filters:
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+      - name: service_b
+        connect_timeout: 5s
+        type: STRICT_DNS
+        lb_policy: ROUND_ROBIN
+        load_assignment:
+          cluster_name: service_b
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: service-b.default.svc.cluster.local
+                    port_value: 80
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-proxy
+  labels:
+    app: envoy-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy-proxy
+  template:
+    metadata:
+      labels:
+        app: envoy-proxy
+    spec:
+      containers:
+      - name: envoy
+        image: envoyproxy/envoy:v1.29-latest
+        imagePullPolicy: IfNotPresent
+        args: ["-c", "/etc/envoy/envoy.yaml"]
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9901
+          name: admin
+        volumeMounts:
+        - name: config
+          mountPath: /etc/envoy
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+      volumes:
+      - name: config
+        configMap:
+          name: envoy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-proxy
+spec:
+  selector:
+    app: envoy-proxy
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: admin
+    port: 9901
+    targetPort: 9901

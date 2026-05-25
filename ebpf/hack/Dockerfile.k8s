@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy pre-built binaries (built on VM before docker build)
-COPY ebpf-loader/target/release/ebpf-loader /app/ebpf-loader
+# Copy pre-built binaries (built via workspace: target/ is at repo root, not crate root)
+COPY target/release/ebpf-loader /app/ebpf-loader
 COPY ebpf/target/bpfel-unknown-none/release/ebpf /app/ebpf-bytecode
 
 # Use K8s-specific config

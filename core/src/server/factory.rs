@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::config::QubitConfig;
 use crate::dao::DAO;
+use crate::envoy::EnvoyDomainCache;
 use crate::topology::Topology;
 
 use super::grpc::GrpcServer;
@@ -12,11 +13,12 @@ pub struct ServerFactory {
     config: Arc<QubitConfig>,
     db: Arc<DAO>,
     topology: Arc<RwLock<Topology>>,
+    cache: Arc<EnvoyDomainCache>,
 }
 
 impl ServerFactory {
-    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>) -> Self {
-        Self { config, db, topology }
+    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>, cache: Arc<EnvoyDomainCache>) -> Self {
+        Self { config, db, topology, cache }
     }
 
     pub fn http(&self) -> HttpServer {
@@ -24,7 +26,7 @@ impl ServerFactory {
     }
 
     pub fn grpc(&self) -> GrpcServer {
-        GrpcServer::new(self.config.clone(), self.db.clone(), self.topology.clone())
+        GrpcServer::new(self.config.clone(), self.db.clone(), self.topology.clone(), self.cache.clone())
     }
 
     pub fn query(&self) -> QueryServer {

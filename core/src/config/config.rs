@@ -9,6 +9,13 @@ pub struct QubitConfig {
     pub app: AppConfig,
     pub kubernetes: KubernetesConfig,
     pub db: DbConfig,
+    pub envoy: EnvoyConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EnvoyConfig {
+    pub admin_api: String,
+    pub refresh_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

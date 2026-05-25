@@ -4,4 +4,10 @@
 /ebpf-common/target
 /ebpf-loader/target
 /cluster-agent/target
+/mcp-server/target
+/load-tests/target
+/target
 *app.env
+/ui/node_modules
+/ui/dist
+.mcp.json

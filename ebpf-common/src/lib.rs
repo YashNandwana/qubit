@@ -92,3 +92,72 @@ impl TcpPayloadEvent {
             .to_string()
     }
 }
+
+// Tests are only compiled when the "user" feature is enabled, because the
+// parsing methods are feature-gated. Run with:
+//   cargo test -p ebpf-common --features user
+#[cfg(all(test, feature = "user"))]
+mod tests {
+    use super::TcpPayloadEvent;
+
+    // Helper: build a TcpPayloadEvent from a raw byte slice.
+    // Bytes beyond MAX_PAYLOAD are silently truncated.
+    fn make_event(payload: &[u8]) -> TcpPayloadEvent {
+        let mut event = TcpPayloadEvent::default();
+        let copy_len = payload.len().min(event.payload.len());
+        event.payload[..copy_len].copy_from_slice(&payload[..copy_len]);
+        event.payload_len = copy_len as u16;
+        event
+    }
+
+    #[test]
+    fn parse_method_get() {
+        let event = make_event(b"GET /index HTTP/1.1\r\nHost: svc\r\n\r\n");
+        assert_eq!(event.parse_method(), Some("GET".to_string()));
+    }
+
+    #[test]
+    fn parse_method_post() {
+        let event = make_event(b"POST /api/v1 HTTP/1.1\r\nHost: svc\r\n\r\n");
+        assert_eq!(event.parse_method(), Some("POST".to_string()));
+    }
+
+    #[test]
+    fn parse_method_malformed_no_space() {
+        // No space in payload → cannot extract method
+        let event = make_event(b"NOTHTTP");
+        assert_eq!(event.parse_method(), None);
+    }
+
+    #[test]
+    fn parse_path_standard() {
+        let event = make_event(b"GET /api/v1/users HTTP/1.1\r\n");
+        assert_eq!(event.parse_path(), Some("/api/v1/users".to_string()));
+    }
+
+    #[test]
+    fn parse_path_root() {
+        let event = make_event(b"GET / HTTP/1.1\r\n");
+        assert_eq!(event.parse_path(), Some("/".to_string()));
+    }
+
+    #[test]
+    fn parse_host_present() {
+        let event = make_event(b"GET / HTTP/1.1\r\nHost: service-b.default\r\nContent-Length: 0\r\n\r\n");
+        assert_eq!(event.parse_host(), Some("service-b.default".to_string()));
+    }
+
+    #[test]
+    fn parse_host_port_stripped() {
+        // "Host: service-b:80" — port suffix should be stripped
+        let event = make_event(b"GET / HTTP/1.1\r\nHost: service-b:80\r\n\r\n");
+        assert_eq!(event.parse_host(), Some("service-b".to_string()));
+    }
+
+    #[test]
+    fn parse_host_absent() {
+        // No Host header present (e.g. raw TCP, health probes)
+        let event = make_event(b"GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+        assert_eq!(event.parse_host(), None);
+    }
+}

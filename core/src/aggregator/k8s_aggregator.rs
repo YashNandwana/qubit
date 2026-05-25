@@ -8,6 +8,7 @@ use crate::topology::{Topology, K8sEvent, NodeId};
 #[derive(Clone)]
 pub struct PodInfo {
     pub namespace: String,
+    pub application_name: String,
     pub service_name: String,
     pub service_type: String,
 }
@@ -40,26 +41,29 @@ impl K8sAggregator {
         self.pod_cache.clone()
     }
 
-    pub fn record_pod_applied(&self, pod_ip: &str, namespace: &str, service_name: &str, service_type: &str) {
+    pub fn record_pod_applied(&self, pod_ip: &str,
+        namespace: &str,
+        application_name: &str,
+        service_name: &str,
+        service_type: &str) {
         self.pod_cache.insert(pod_ip.to_string(), PodInfo {
             namespace: namespace.to_string(),
+            application_name: application_name.to_string(),
             service_name: service_name.to_string(),
             service_type: service_type.to_string(),
         });
         // If we now know the real service name, fix any stale topology nodes
         // that were created with the raw IP before this mapping existed.
-        if !service_name.is_empty() {
+        if !application_name.is_empty() {
             if let Ok(mut topo) = self.topology.write() {
-                topo.resolve_unknown_node(pod_ip, service_name, namespace);
+                log::info!("resolving stale topology entries from pod cache {} {}", pod_ip, application_name);
+                topo.resolve_unknown_node(pod_ip, application_name, namespace);
             } else {
                 log::warn!("Failed to acquire topology write lock — skipping resolve for {}", pod_ip);
             }
         }
 
         log::info!("Pod cache ({} entries):", self.pod_cache.entry_count());
-        for (ip, info) in self.pod_cache.iter() {
-            log::info!("  {} -> {}/{}", ip, info.namespace, info.service_name);
-        }
     }
 
     pub fn record_pod_deleted(&self, pod_ip: &str) {
@@ -132,7 +136,7 @@ impl K8sAggregator {
 
         if let Ok(mut topo) = self.topology.write() {
             let node_id = NodeId {
-                service_name: name.to_string(),
+                application_name: name.to_string(),
                 namespace: namespace.to_string(),
             };
             topo.add_k8s_event(node_id, topo_event);

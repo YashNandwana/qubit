@@ -27,6 +27,11 @@ LIMA_VM ?= qubit
 LIMA_CMD = limactl shell $(LIMA_VM) --
 PROJECT_DIR = $(shell cd ../.. && pwd)
 
+# Load generator defaults (override on the command line: make vm-load-gen K8S_RPS=50)
+K8S_RPS ?= 10
+HTTP_RPS ?= 20
+DURATION ?= 60
+
 # Kind Configuration
 KIND_CLUSTER ?= qubit-test
 KIND_IMAGE ?= qubit-ebpf:latest
@@ -234,7 +239,8 @@ help:
 	@echo "  vm-cluster-agent            Build + package cluster-agent for Kind"
 	@echo "  vm-docker-build             Build eBPF K8s runtime image"
 	@echo "  vm-kind-load                Load eBPF image into Kind cluster"
-	@echo "  vm-deploy                   Deploy cluster-agent + DaemonSet + test pods"
+	@echo "  vm-envoy-pull               Pull Envoy image from Docker Hub and load into Kind (run once)"
+	@echo "  vm-deploy                   Deploy cluster-agent + envoy-proxy + DaemonSet + test pods"
 	@echo "  vm-logs                     View eBPF DaemonSet logs"
 	@echo "  vm-status                   Check pod status"
 	@echo "  vm-test                     Full end-to-end test (first time)"
@@ -242,6 +248,13 @@ help:
 	@echo "  vm-chaos                    Chaos loop: create/update/delete objects"
 	@echo "  vm-cleanup                  Remove all deployments"
 	@echo "  vm-shell                    Open a shell in the Lima VM"
+	@echo ""
+	@echo "=== LOAD GENERATOR (Natural Traffic) ==="
+	@echo "  vm-load-gen                 Full pipeline: build + package + deploy"
+	@echo "  vm-load-gen-deploy          Deploy load-gen Job (skips build)"
+	@echo "  vm-load-gen-logs            Follow load-gen output"
+	@echo "  vm-load-gen-status          Check Job and pod status"
+	@echo "  vm-load-gen-cleanup         Remove Job and load-gen namespace"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  clean              Remove build artifacts"
@@ -398,15 +411,33 @@ vm-cluster-agent: vm-build-cluster-agent vm-docker-build-cluster-agent vm-kind-l
 # ------------------------------
 # Kubernetes Deployment
 # ------------------------------
+# Pull the Envoy image into the Lima VM and load it into Kind so the pod
+# doesn't need to hit Docker Hub at runtime (avoids ImagePullBackOff).
+# Run this once after vm-cluster-create, before vm-deploy.
+# kind load docker-image fails on multi-platform manifest images because it
+# tries to import all architectures but only the host platform is pulled locally.
+# docker save exports only the pulled platform → kind load image-archive works.
+.PHONY: vm-envoy-pull
+vm-envoy-pull:
+	@echo "Pulling Envoy image into Lima VM..."
+	@$(LIMA_CMD) bash -c "docker pull envoyproxy/envoy:v1.29-latest"
+	@echo "Loading Envoy image into Kind cluster (via image-archive to avoid multi-platform issue)..."
+	@$(LIMA_CMD) bash -c "docker save envoyproxy/envoy:v1.29-latest -o /tmp/envoy-kind.tar && \
+		kind load image-archive /tmp/envoy-kind.tar --name $(KIND_CLUSTER) && \
+		rm -f /tmp/envoy-kind.tar"
+	@echo "Envoy image ready in Kind."
+
 .PHONY: vm-deploy
 vm-deploy:
-	@echo "Deploying cluster-agent, test pods, and eBPF DaemonSet..."
+	@echo "Deploying cluster-agent, envoy-proxy, test pods, and eBPF DaemonSet..."
 	@$(LIMA_CMD) bash -c "kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/cluster-agent.yaml && \
+		kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/envoy-proxy.yaml && \
 		kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/test-pods.yaml && \
 		kubectl apply -f $(PROJECT_DIR)/ebpf/hack/k8s/ebpf-daemonset.yaml"
 	@echo "Waiting for pods to be ready..."
 	@$(LIMA_CMD) bash -c "kubectl wait --for=condition=Ready pod -l app=qubit-ebpf --timeout=60s 2>/dev/null || true && \
-		kubectl wait --for=condition=Ready pod -l app=qubit-cluster-agent --timeout=60s 2>/dev/null || true"
+		kubectl wait --for=condition=Ready pod -l app=qubit-cluster-agent --timeout=60s 2>/dev/null || true && \
+		kubectl wait --for=condition=Ready pod -l app=envoy-proxy --timeout=120s 2>/dev/null || true"
 	@echo "Deployed! Use 'make vm-status' to check status"
 
 .PHONY: vm-status
@@ -422,14 +453,15 @@ vm-logs:
 .PHONY: vm-logs-pods
 vm-logs-pods:
 	@echo "Test pod logs..."
-	@$(LIMA_CMD) bash -c "kubectl logs -l app=ping-service-a --tail=20; \
-		kubectl logs -l app=ping-service-b --tail=20"
+	@$(LIMA_CMD) bash -c "kubectl logs -l app=service-a --tail=20; \
+		kubectl logs -l app=service-b --tail=20"
 
 .PHONY: vm-cleanup
 vm-cleanup:
 	@echo "Removing deployments..."
 	@$(LIMA_CMD) bash -c "kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/ebpf-daemonset.yaml --ignore-not-found && \
 		kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/test-pods.yaml --ignore-not-found && \
+		kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/envoy-proxy.yaml --ignore-not-found && \
 		kubectl delete -f $(PROJECT_DIR)/ebpf/hack/k8s/cluster-agent.yaml --ignore-not-found"
 	@echo "Cleanup complete"
 
@@ -482,7 +514,7 @@ vm-chaos:
 
 # First-time: cluster + build everything + deploy
 .PHONY: vm-test
-vm-test: vm-cluster-create vm-build-loader vm-cluster-agent vm-docker-build vm-kind-load vm-deploy
+vm-test: vm-cluster-create vm-build-loader vm-cluster-agent vm-docker-build vm-kind-load vm-envoy-pull vm-deploy
 	@echo ""
 	@echo "=========================================="
 	@echo "  Production-like test environment ready!"
@@ -500,3 +532,14 @@ vm-redeploy: vm-build-loader vm-cluster-agent vm-docker-build vm-kind-load vm-cl
 	@echo ""
 	@echo "Redeployed! Use 'make vm-logs' to check output."
 	@echo ""
+
+# ------------------------------
+# Load generator
+# Override defaults: make vm-load-gen K8S_RPS=50 HTTP_RPS=100 DURATION=120
+# ------------------------------
+.PHONY: vm-load-gen
+vm-load-gen:
+	@$(LIMA_CMD) bash -c "export PATH=\$$HOME/.cargo/bin:\$$PATH && \
+		cd $(PROJECT_DIR)/load-tests && \
+		K8S_RPS=$(K8S_RPS) HTTP_RPS=$(HTTP_RPS) DURATION=$(DURATION) \
+		cargo run --release --bin load-gen"

@@ -1,0 +1,21 @@
+[package]
+name = "qubit-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rmcp = { version = "0.16", features = ["server", "transport-io", "macros"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+anyhow = "1"
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+clickhouse = "0.14.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_yaml = "0.9"
+
+[build-dependencies]
+tonic-build = "0.12"

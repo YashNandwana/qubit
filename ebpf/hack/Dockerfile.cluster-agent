@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy pre-built binary (built on VM before docker build)
-COPY cluster-agent/target/release/cluster-agent /app/cluster-agent
+# Copy pre-built binary (built via workspace: target/ is at repo root, not crate root)
+COPY target/release/cluster-agent /app/cluster-agent
 
 # Config is mounted via ConfigMap at /app/config.yaml
 ENV RUST_LOG=info

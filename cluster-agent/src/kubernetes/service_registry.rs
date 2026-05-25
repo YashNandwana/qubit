@@ -75,3 +75,127 @@ impl ServiceRegistry {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use k8s_openapi::api::core::v1::{Pod, Service, ServiceSpec};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+
+    use super::ServiceRegistry;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn make_service(name: &str, namespace: &str, selector: &[(&str, &str)]) -> Service {
+        // k8s_openapi types are plain structs — we can build them directly.
+        // This is the same approach used in production kube-rs controllers.
+        Service {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.to_string()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                selector: Some(
+                    selector.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                ),
+                type_: Some("ClusterIP".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn make_pod(labels: &[(&str, &str)]) -> Pod {
+        Pod {
+            metadata: ObjectMeta {
+                labels: Some(
+                    labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                ),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn exact_match() {
+        // Pod labels exactly match the service selector → service found
+        let registry = ServiceRegistry::new();
+        let svc = make_service("my-svc", "default", &[("app", "frontend")]);
+        registry.register(&svc).unwrap();
+
+        let pod = make_pod(&[("app", "frontend")]);
+        let result = registry.find_service_for_pod(&pod);
+
+        assert!(result.is_some());
+        let (name, _) = result.unwrap();
+        assert_eq!(name, "my-svc");
+    }
+
+    #[test]
+    fn selector_is_subset_of_pod_labels() {
+        // Pod has extra labels beyond the selector — should still match.
+        // Kubernetes semantics: selector is a subset check, not an equality check.
+        let registry = ServiceRegistry::new();
+        let svc = make_service("api-svc", "prod", &[("app", "api")]);
+        registry.register(&svc).unwrap();
+
+        // Pod has "app=api" plus extra labels
+        let pod = make_pod(&[("app", "api"), ("version", "v2"), ("tier", "backend")]);
+        let result = registry.find_service_for_pod(&pod);
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().0, "api-svc");
+    }
+
+    #[test]
+    fn no_match_when_pod_missing_selector_label() {
+        // Pod is missing one key from the selector → no match
+        let registry = ServiceRegistry::new();
+        let svc = make_service("db-svc", "default", &[("app", "db"), ("env", "prod")]);
+        registry.register(&svc).unwrap();
+
+        // Pod only has "app=db", missing "env=prod"
+        let pod = make_pod(&[("app", "db")]);
+        assert!(registry.find_service_for_pod(&pod).is_none());
+    }
+
+    #[test]
+    fn deregister_removes_service() {
+        let registry = ServiceRegistry::new();
+        let svc = make_service("temp-svc", "default", &[("app", "temp")]);
+        registry.register(&svc).unwrap();
+
+        registry.deregister("temp-svc", "default").unwrap();
+
+        let pod = make_pod(&[("app", "temp")]);
+        assert!(registry.find_service_for_pod(&pod).is_none());
+    }
+
+    #[test]
+    fn selector_less_service_is_not_registered() {
+        // Services without selectors (e.g. ExternalName) should be silently skipped.
+        let registry = ServiceRegistry::new();
+        let svc = Service {
+            metadata: ObjectMeta {
+                name: Some("headless".to_string()),
+                namespace: Some("default".to_string()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                selector: None, // no selector
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        registry.register(&svc).unwrap();
+
+        // Registry should be empty — nothing was registered
+        let pod = make_pod(&[("app", "anything")]);
+        assert!(registry.find_service_for_pod(&pod).is_none());
+    }
+}

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use k8s_openapi::api::core::v1::ConfigMap;
 
+use super::envoy_parser::parse_envoy_routes;
 use super::informer::EventHandler;
 use crate::service::ClusterAggregator;
 
@@ -20,6 +21,21 @@ impl EventHandler<ConfigMap> for ConfigMapHandler {
         let name = cm.metadata.name.clone().unwrap_or_default();
         let namespace = cm.metadata.namespace.clone().unwrap_or_default();
         let aggregator = self.aggregator.clone();
+
+        // If this ConfigMap contains an Envoy config, parse and push routes to core.
+        if let Some(envoy_yaml) = cm.data.as_ref().and_then(|d| d.get("envoy.yaml")) {
+            let routes = parse_envoy_routes(envoy_yaml);
+            if !routes.is_empty() {
+                let agg = aggregator.clone();
+                let n = name.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = agg.send_envoy_routes(routes).await {
+                        log::error!("Failed to send envoy routes from ConfigMap {}: {}", n, e);
+                    }
+                });
+            }
+        }
+
         tokio::spawn(async move {
             if let Err(e) = aggregator.send_configmap_applied(name.clone(), namespace).await {
                 log::error!("Failed to send configmap applied (name={}): {}", name, e);

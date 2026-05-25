@@ -12,6 +12,9 @@ db:
   table:
     ebpf_network_events: ebpf_network_events
     k8s_resource_events: k8s_resource_events
+envoy:
+  admin_api: http://localhost:9901
+  refresh_interval_secs: 30
 kubernetes:
   in_cluster: true
   namespace: ""

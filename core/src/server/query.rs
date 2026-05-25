@@ -23,7 +23,7 @@ impl QueryServer {
 /// Builds a consistent map key from a NodeId: "namespace/service_name".
 /// This mirrors the Topology's HashMap<NodeId, _> but with a proto-compatible string key.
 fn node_key(node_id: &NodeId) -> String {
-    format!("{}/{}", node_id.namespace, node_id.service_name)
+    format!("{}/{}", node_id.namespace, node_id.application_name)
 }
 
 /// Converts a Vec<Flow> into a proto FlowList.
@@ -32,9 +32,9 @@ fn to_flow_list(flows: &[crate::topology::Flow]) -> FlowList {
         flows: flows
             .iter()
             .map(|flow| TopologyEdge {
-                source_service: flow.source_node.service_name.clone(),
+                source_application: flow.source_node.application_name.clone(),
                 source_namespace: flow.source_node.namespace.clone(),
-                destination_service: flow.destination_node.service_name.clone(),
+                destination_application: flow.destination_node.application_name.clone(),
                 destination_namespace: flow.destination_node.namespace.clone(),
                 method: flow.method.clone(),
                 path: flow.path.clone(),
@@ -60,7 +60,7 @@ impl QubitQuery for QueryServer {
             .map(|(node_id, node_data)| {
                 let key = node_key(node_id);
                 let node = TopologyNode {
-                    service_name: node_id.service_name.clone(),
+                    application_name: node_id.application_name.clone(),
                     namespace: node_id.namespace.clone(),
                     ip: node_data.ip.clone(),
                 };

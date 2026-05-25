@@ -34,9 +34,9 @@ impl InformerFactory {
             registry: Arc::new(ServiceRegistry::new()),
         }
     }
-
-    // ── Existing handlers with specific logic ────────────────────────
-
+    
+    // ── Native K8s resources using GenericHandler ────────────────────
+    
     pub fn create_configmap_informer(&self) -> Arc<dyn Informer + Send + Sync> {
         InformerGeneric::<ConfigMap, ConfigMapHandler>::new(
             self.config.clone(),
@@ -60,8 +60,6 @@ impl InformerFactory {
             PodHandler::new(self.aggregator.clone(), self.registry.clone()),
         )
     }
-
-    // ── Native K8s resources using GenericHandler ────────────────────
 
     pub fn create_deployment_informer(&self) -> Arc<dyn Informer + Send + Sync> {
         InformerGeneric::<Deployment, GenericHandler>::new(

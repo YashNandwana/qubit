@@ -7,6 +7,7 @@ use moka::sync::Cache;
 use crate::aggregator::k8s_aggregator::PodInfo;
 use crate::config::QubitConfig;
 use crate::dao::DAO;
+use crate::envoy::EnvoyDomainCache;
 use crate::model::{EbpfNetworkEvent, EbpfNetworkEventInput, Error};
 use crate::topology::{Flow, NodeData, NodeId, Topology};
 
@@ -20,6 +21,7 @@ pub struct EbpfAggregator {
     /// Key: "src_ns/src_svc", Value: set of "dst_ns/dst_svc".
     /// Prevents duplicate DB rows for the same dependency edge.
     seen_edges: Arc<RwLock<HashSet<String>>>,
+    envoy_cache: Arc<EnvoyDomainCache>,
 }
 
 impl EbpfAggregator {
@@ -28,6 +30,7 @@ impl EbpfAggregator {
         db: Arc<DAO>,
         topology: Arc<RwLock<Topology>>,
         pod_cache: Arc<Cache<String, PodInfo>>,
+        envoy_cache: Arc<EnvoyDomainCache>
     ) -> Self {
         Self {
             config,
@@ -36,6 +39,7 @@ impl EbpfAggregator {
             pod_cache,
             bulk_addition_data: Arc::new(RwLock::new(Vec::new())),
             seen_edges: Arc::new(RwLock::new(HashSet::new())),
+            envoy_cache,
         }
     }
 
@@ -48,22 +52,44 @@ impl EbpfAggregator {
         let src_ip = input.src_ip_str();
         let dst_ip = input.dst_ip_str();
 
-        // Resolve source: pod cache IP → (service, namespace)
+        // Resolve source: pod cache IP → (service, namespace).
+        // If the pod cache hasn't seen this IP yet (cluster-agent event hasn't arrived),
+        // drop the event. eBPF traffic is continuous — the next packet from this pod will
+        // resolve correctly once the cache is populated. This avoids raw IPs leaking into
+        // the topology during the brief startup race window.
         let pod_info = self.pod_cache.get(&src_ip);
-        let src_namespace = pod_info.as_ref().map(|p| p.namespace.as_str()).unwrap_or("unknown");
-        let src_service = pod_info
-            .as_ref()
-            .filter(|p| !p.service_name.is_empty())
-            .map(|p| p.service_name.as_str())
-            .unwrap_or(&src_ip);
-
-        // Resolve destination: pod cache first, fall back to Host header parsing
-        let dst_pod_info = self.pod_cache.get(&dst_ip);
-        let (dst_service, dst_namespace) = match dst_pod_info {
-            Some(ref info) if !info.service_name.is_empty() => {
-                (info.service_name.clone(), info.namespace.clone())
+        let (src_namespace, src_service_owned);
+        match pod_info.as_ref().filter(|p| !p.application_name.is_empty()) {
+            Some(p) => {
+                src_namespace = p.namespace.clone();
+                src_service_owned = p.application_name.clone();
             }
-            _ => parse_k8s_host(&input.host),
+            None => {
+                log::debug!("dropping event: source IP {} not yet in pod cache", src_ip);
+                return Ok("unresolved source — waiting for pod event".to_string());
+            }
+        }
+        let src_service = src_service_owned.as_str();
+
+        // Strip port from Host header before cache lookups — curl sends "host:port",
+        // but cache keys are always bare hostnames.
+        let host = input.host.split(':').next().unwrap_or(&input.host);
+
+        // Resolve destination (priority order):
+        // 1. Envoy cache — authoritative; maps Host header to service/namespace for
+        //    any service Envoy knows about (both .svc FQDNs and custom domains like svc.meesho.int)
+        // 2. Pod cache — fallback for direct pod-to-pod traffic not routed through Envoy
+        // 3. parse_k8s_host — heuristic last resort for K8s DNS names we can pattern-match
+        let (dst_service, dst_namespace) = if let Some((svc, ns)) = self.envoy_cache.get(host) {
+            (svc, ns)
+        } else {
+            let dst_pod_info = self.pod_cache.get(&dst_ip);
+            match dst_pod_info {
+                Some(ref info) if !info.application_name.is_empty() => {
+                    (info.application_name.clone(), info.namespace.clone())
+                }
+                _ => parse_k8s_host(host),
+            }
         };
 
         // Dedup: only persist one row per (src_service → dst_service) pair.
@@ -99,22 +125,14 @@ impl EbpfAggregator {
             self.insert_bulk_events(db_event).await?;
         }
 
-        // Always update the topology (it deduplicates internally via HashMap keys)
         let source_node = NodeId {
-            service_name: src_service.to_string(),
+            application_name: src_service.to_string(),
             namespace: src_namespace.to_string(),
         };
 
         let destination_node = NodeId {
-            service_name: dst_service.to_string(),
+            application_name: dst_service.to_string(),
             namespace: dst_namespace.to_string(),
-        };
-
-        let flow = Flow {
-            source_node: source_node.clone(),
-            destination_node: destination_node.clone(),
-            path: input.path,
-            method: input.method,
         };
 
         {
@@ -123,10 +141,20 @@ impl EbpfAggregator {
                 .write()
                 .map_err(|_| Error::EbpfEventRecordingFailed("topology lock poisoned".to_string()))?;
 
-            topo.add_flow(flow);
+            // Only add the flow on new edges — topology needs one edge per service pair,
+            // not one per captured packet.
+            if is_new_edge {
+                let flow = Flow {
+                    source_node: source_node.clone(),
+                    destination_node: destination_node.clone(),
+                    path: input.path,
+                    method: input.method,
+                };
+                topo.add_flow(flow);
+            }
 
             topo.add_node(source_node, NodeData {
-                ip: src_ip,
+                ip: src_ip.clone(),
                 ..Default::default()
             });
 
@@ -202,31 +230,101 @@ impl EbpfAggregator {
     }
 }
 
-/// Parses a Kubernetes host header into (service_name, namespace).
+/// Parses a Kubernetes host header into (application_name, namespace).
 ///
-/// K8s DNS names follow the pattern: `<service>.<namespace>[.svc[.cluster.local]]`
-/// If the host is an IP address (e.g. kubelet health probes), we return it as-is
-/// rather than splitting octets into service/namespace fields.
+/// Only trusts names that contain ".svc" as K8s internal — that substring is
+/// present in every cross-namespace K8s DNS name and absent in public domains.
+/// Single-label names (no dots) are also unambiguous K8s service names.
+/// Everything else (e.g. "httpbin.org", "api.github.com") is treated as an
+/// external host: returned as-is under the "external" namespace so it still
+/// appears in the topology but doesn't pollute real namespace data.
 ///
 /// Examples:
 ///   "service-b.default.svc.cluster.local" -> ("service-b", "default")
-///   "service-b.default"                   -> ("service-b", "default")
+///   "service-b.default.svc"               -> ("service-b", "default")
+///   "service-b.default.svc:80"            -> ("service-b", "default")
 ///   "service-b"                           -> ("service-b", "unknown")
+///   "httpbin.org"                         -> ("httpbin.org", "external")
+///   "api.github.com"                      -> ("api.github.com", "external")
 ///   "10.244.0.3"                          -> ("10.244.0.3", "unknown")
-fn parse_k8s_host(host: &str) -> (String, String) {
+pub(crate) fn parse_k8s_host(host: &str) -> (String, String) {
     // Strip port if present (e.g. "service-b.default.svc:80")
     let host = host.split(':').next().unwrap_or(host);
 
-    // Don't split IP addresses — they're not k8s DNS names.
-    // This catches kubelet probes, direct pod-to-pod-by-IP traffic, etc.
+    // IP addresses pass through — not a DNS name at all.
     if host.parse::<std::net::Ipv4Addr>().is_ok() {
         return (host.to_string(), "unknown".to_string());
     }
 
-    let parts: Vec<&str> = host.splitn(3, '.').collect();
-    match parts.as_slice() {
-        [svc, ns, ..] => (svc.to_string(), ns.to_string()),
-        [svc] => (svc.to_string(), "unknown".to_string()),
-        _ => (host.to_string(), "unknown".to_string()),
+    // Single label = unambiguous K8s service name (same namespace call).
+    if !host.contains('.') {
+        return (host.to_string(), "unknown".to_string());
+    }
+
+    // Only trust multi-label names that contain ".svc" — the reliable marker
+    // of a K8s internal DNS name. "httpbin.org" doesn't contain it;
+    // "service-b.default.svc.cluster.local" does.
+    if host.contains(".svc") {
+        let parts: Vec<&str> = host.splitn(3, '.').collect();
+        if let [svc, ns, ..] = parts.as_slice() {
+            return (svc.to_string(), ns.to_string());
+        }
+    }
+
+    // External host — preserve the full name so it's visible in the topology.
+    (host.to_string(), "external".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_k8s_host;
+
+    #[test]
+    fn parse_fqdn() {
+        let (svc, ns) = parse_k8s_host("service-b.default.svc.cluster.local");
+        assert_eq!(svc, "service-b");
+        assert_eq!(ns, "default");
+    }
+
+    #[test]
+    fn parse_svc_short() {
+        let (svc, ns) = parse_k8s_host("service-b.default.svc");
+        assert_eq!(svc, "service-b");
+        assert_eq!(ns, "default");
+    }
+
+    #[test]
+    fn parse_service_only() {
+        let (svc, ns) = parse_k8s_host("service-b");
+        assert_eq!(svc, "service-b");
+        assert_eq!(ns, "unknown");
+    }
+
+    #[test]
+    fn parse_ip_passthrough() {
+        let (svc, ns) = parse_k8s_host("10.244.0.3");
+        assert_eq!(svc, "10.244.0.3");
+        assert_eq!(ns, "unknown");
+    }
+
+    #[test]
+    fn parse_strips_port() {
+        let (svc, ns) = parse_k8s_host("service-b.default.svc:80");
+        assert_eq!(svc, "service-b");
+        assert_eq!(ns, "default");
+    }
+
+    #[test]
+    fn parse_external_domain() {
+        let (svc, ns) = parse_k8s_host("httpbin.org");
+        assert_eq!(svc, "httpbin.org");
+        assert_eq!(ns, "external");
+    }
+
+    #[test]
+    fn parse_external_subdomain() {
+        let (svc, ns) = parse_k8s_host("api.github.com");
+        assert_eq!(svc, "api.github.com");
+        assert_eq!(ns, "external");
     }
 }

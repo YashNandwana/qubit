@@ -11,4 +11,7 @@ pub enum Error {
     
     #[error("Failed to record ebpf event: {0}")]
     EbpfEventRecordingFailed(String),
+
+    #[error("Envoy admin API request failed: {0}")]
+    EnvoyRequestFailed(String),
 }

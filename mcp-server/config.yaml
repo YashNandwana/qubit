@@ -1,0 +1,11 @@
+qubit_core:
+  grpc_address: "http://localhost:50051"
+
+clickhouse:
+  host: localhost
+  port: 8123
+  user: default
+  password: "qubit"
+  database: default
+  ebpf_table: ebpf_network_events
+  k8s_table: k8s_resource_events
