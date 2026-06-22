@@ -419,3 +419,18 @@ limactl shell qubit -- bash -c "cd /path/to/qubit && cargo test -p cluster-agent
 cargo test -p ebpf-common --features user
 ```
 
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Language | Rust |
+| Async runtime | Tokio |
+| eBPF framework | Aya |
+| gRPC | Tonic + Prost |
+| HTTP server | Axum |
+| K8s client | kube-rs + k8s-openapi |
+| Database | ClickHouse |
+| Caching | Moka |
+| Errors | thiserror + anyhow |
+| MCP framework | rmcp |
+| Dev environment | Lima + Kind |
