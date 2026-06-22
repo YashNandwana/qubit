@@ -338,12 +338,25 @@ clickhouse:
 
 ### Claude Code Integration
 
-The project ships a `.mcp.json` that points Claude Code at the compiled binary:
+Create a `.mcp.json` in the repo root pointing Claude Code at the compiled binary:
 
 ```bash
 cargo build -p qubit-mcp
-# Update .mcp.json with the binary path — Claude Code picks it up on next launch.
+
+cat > .mcp.json << 'EOF'
+{
+  "mcpServers": {
+    "qubit": {
+      "command": "/absolute/path/to/target/debug/qubit-mcp",
+      "args": []
+    }
+  }
+}
+EOF
+# Claude Code picks it up on next launch.
 ```
+
+`.mcp.json` is gitignored (it contains machine-local binary paths).
 
 ### Available MCP Tools
 
