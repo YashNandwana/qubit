@@ -4,6 +4,21 @@
 
 Qubit automatically discovers and maps service-to-service HTTP dependencies in Kubernetes clusters by monitoring network traffic at the kernel level. No code changes, no sidecars, no instrumentation SDKs required.
 
+Unlike service meshes (Istio, Linkerd) or APM agents (Datadog, New Relic), Qubit requires nothing from the application — it observes actual HTTP traffic at the OS kernel level via eBPF, then correlates packets with Kubernetes metadata to produce an accurate, real-time service dependency graph. It also resolves through transparent proxies like Envoy with no manual configuration.
+
+## Status
+
+**Early alpha — tested on single-node Kind clusters. Not yet hardened for production use.**
+
+What works today:
+- Full eBPF capture → enrichment → topology pipeline end-to-end
+- Kubernetes metadata collection (11 resource types)
+- Envoy transparent proxy resolution
+- MCP tools for AI assistant integration
+- Web UI for topology visualization
+
+Known gaps before production use: no high availability, no Prometheus metrics, no TLS/auth on gRPC, no graceful shutdown coordination, hardcoded dev addresses in K8s manifests (see [Local Dev Architecture](#local-dev-architecture)).
+
 ## Architecture
 
 ```
@@ -201,7 +216,15 @@ make -C ebpf/hack vm-load-gen
 make -C ebpf/hack vm-load-gen K8S_RPS=50 HTTP_RPS=100 DURATION=120
 ```
 
-### 4. Query the topology
+### 4. Open the UI
+
+```bash
+cd ui && npm install && npm run dev
+```
+
+Opens at `http://localhost:5173`. Three tabs: **Topology** (interactive service graph), **K8s Events** (recent Kubernetes resource events), **Network Events** (raw eBPF HTTP traffic).
+
+### 5. Query the topology via gRPC
 
 ```bash
 grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
@@ -226,6 +249,8 @@ Expected: `service-a → service-b` (not `service-a → envoy-proxy`). The Envoy
 
 Core runs natively on macOS for fast iteration. The Kind cluster inside the Lima VM hosts the eBPF DaemonSet (needs Linux kernel access), the Cluster Agent, Envoy, and test workloads. All in-cluster components reach Core at `192.168.5.2:50051` (Mac host gateway).
 
+> **Note:** The address `192.168.5.2` is the Lima VM's default Mac host gateway. The K8s ConfigMaps for cluster-agent and ebpf-loader hardcode this address — they are dev-only manifests and will need to be updated for any other environment.
+
 ## Configuration
 
 ### Core (`core/config.yaml`)
@@ -246,6 +271,8 @@ db:
     ebpf_network_events: ebpf_network_events
     k8s_resource_events: k8s_resource_events
 ```
+
+ClickHouse tables are created automatically on first run. eBPF events are retained for **7 days**; K8s resource events for **1 day**. Data older than these TTLs is deleted automatically by ClickHouse's background merge process.
 
 ### Cluster Agent (`cluster-agent/config.yaml`)
 
@@ -329,22 +356,54 @@ cargo build -p qubit-mcp
 
 ## Load Generator
 
-`load-tests` is a simple traffic generator with two configurable streams:
+`load-tests` is a traffic generator with two configurable streams:
 
-| Stream | What it does | What it exercises |
-|--------|-------------|-------------------|
-| K8s (`--k8s-rps`) | Creates/patches/deletes ConfigMaps | cluster-agent informers → Core |
-| HTTP (`--http-rps`) | GET requests to service-b | eBPF capture → Core |
+| Stream | What it does | What it exercises | Runs from |
+|--------|-------------|-------------------|-----------|
+| K8s (`--k8s-rps`) | Creates/patches/deletes ConfigMaps | cluster-agent informers → Core | Lima VM host |
+| HTTP (`--http-rps`) | GET requests to service-b | eBPF capture → Core | Inside cluster only |
+
+The K8s stream requires a `load-gen` namespace:
 
 ```bash
-# Default: 10 k8s/s + 20 http/s for 60s
+# One-time: create the namespace
+limactl shell qubit -- kubectl create namespace load-gen
+
+# Run K8s stream (10 rps, 60s)
 make -C ebpf/hack vm-load-gen
 
 # Custom rates
-make -C ebpf/hack vm-load-gen K8S_RPS=50 HTTP_RPS=100 DURATION=120
+make -C ebpf/hack vm-load-gen K8S_RPS=50 DURATION=120
 
 # Or directly from the Lima VM shell
-cd load-tests && cargo run --release --bin load-gen -- --k8s-rps 50 --http-rps 100
+limactl shell qubit -- bash -c "cd load-tests && cargo run --release --bin load-gen -- --k8s-rps 10"
+```
+
+> **Note:** The HTTP stream uses `http://service-b.default.svc.cluster.local/` which is only resolvable from inside a cluster pod. Running `HTTP_RPS > 0` from the Lima VM host will produce errors. A K8s Job deployment path for the HTTP stream is not yet implemented.
+
+## Testing
+
+```bash
+# Unit tests — runs on macOS, no Linux or cluster required (16 tests)
+cargo test -p Qubit -p qubit-mcp
+
+# End-to-end: deploy to Kind, generate load, observe topology
+make -C ebpf/hack vm-test
+make -C ebpf/hack vm-load-gen   # K8s stream only; see Load Generator section
+grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
+```
+
+`cluster-agent`, `ebpf-loader`, and `load-tests` depend on Aya (Linux-only eBPF framework) and cannot be compiled on macOS. Build and test them inside the Lima VM:
+
+```bash
+limactl shell qubit -- bash -c "cd /path/to/qubit && cargo test -p cluster-agent -p ebpf-loader"
+```
+
+`ebpf-common` tests require the `user` feature flag and also need Linux:
+
+```bash
+# Inside Lima VM only
+cargo test -p ebpf-common --features user
 ```
 
 ## Tech Stack
