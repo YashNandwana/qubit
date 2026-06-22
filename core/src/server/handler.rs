@@ -112,6 +112,83 @@ pub async fn topology(
     Json(TopologyResponse { nodes, upstream, downstream })
 }
 
+// ── /api/topology/subgraph ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SubgraphParams {
+    pub service: String,
+    pub namespace: String,
+    /// BFS depth from root; defaults to 1. Send 999 from the UI for "∞".
+    pub depth: Option<u32>,
+}
+
+pub async fn topology_subgraph(
+    State(topology): State<Arc<RwLock<Topology>>>,
+    Query(params): Query<SubgraphParams>,
+) -> Json<TopologyResponse> {
+    let depth = params.depth.unwrap_or(1);
+    let topo = topology.read().unwrap();
+    let sg = topo.get_subgraph(&params.service, &params.namespace, depth);
+
+    let nodes: HashMap<String, NodeDto> = sg
+        .nodes
+        .iter()
+        .filter_map(|id| {
+            topo.nodes.get(id).map(|data| {
+                let key = format!("{}/{}", id.namespace, id.application_name);
+                let dto = NodeDto {
+                    application_name: id.application_name.clone(),
+                    namespace: id.namespace.clone(),
+                    ip: data.ip.clone(),
+                };
+                (key, dto)
+            })
+        })
+        .collect();
+
+    let upstream: HashMap<String, FlowList> = sg
+        .upstream
+        .iter()
+        .map(|(id, flows)| {
+            let key = format!("{}/{}", id.namespace, id.application_name);
+            let list = FlowList {
+                flows: flows
+                    .iter()
+                    .map(|f| FlowDto {
+                        source_application: f.source_node.application_name.clone(),
+                        destination_application: f.destination_node.application_name.clone(),
+                        method: f.method.clone(),
+                        path: f.path.clone(),
+                    })
+                    .collect(),
+            };
+            (key, list)
+        })
+        .collect();
+
+    let downstream: HashMap<String, FlowList> = sg
+        .downstream
+        .iter()
+        .map(|(id, flows)| {
+            let key = format!("{}/{}", id.namespace, id.application_name);
+            let list = FlowList {
+                flows: flows
+                    .iter()
+                    .map(|f| FlowDto {
+                        source_application: f.source_node.application_name.clone(),
+                        destination_application: f.destination_node.application_name.clone(),
+                        method: f.method.clone(),
+                        path: f.path.clone(),
+                    })
+                    .collect(),
+            };
+            (key, list)
+        })
+        .collect();
+
+    Json(TopologyResponse { nodes, upstream, downstream })
+}
+
 // ── Pagination helpers ────────────────────────────────────────────────────────
 
 /// Query params shared by both paginated endpoints: `?page=0&page_size=50`

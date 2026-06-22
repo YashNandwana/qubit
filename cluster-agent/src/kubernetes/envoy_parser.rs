@@ -79,7 +79,8 @@ pub fn parse_envoy_routes(yaml_str: &str) -> Vec<EnvoyRoute> {
                 };
 
                 for vh in vhosts {
-                    // Resolve mapping from the first route's cluster name
+                    // Static Envoy config has exactly one upstream per virtual host,
+                    // so the first route's cluster is the only relevant one.
                     let cluster_name = vh["routes"][0]["route"]["cluster"].as_str().unwrap_or("");
                     let mapping = match cluster_map.get(cluster_name) {
                         Some(m) => m.clone(),
@@ -93,6 +94,7 @@ pub fn parse_envoy_routes(yaml_str: &str) -> Vec<EnvoyRoute> {
 
                     for domain in domains {
                         if let Some(d) = domain.as_str() {
+                            // Wildcards can't be used as exact lookup keys.
                             if d == "*" || d.starts_with("*.") {
                                 continue;
                             }

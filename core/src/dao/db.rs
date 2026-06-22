@@ -2,6 +2,7 @@ use clickhouse::insert::Insert;
 use clickhouse::Client;
 use clickhouse::Row;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::config::QubitConfig;
@@ -109,13 +110,57 @@ impl DAO {
     }
 
     pub async fn add_events(&self, events: Vec<EbpfNetworkEvent>) -> Result<(), Error> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        // One query to fetch the full set of existing edge keys — cheaper than
+        // per-event existence checks and avoids holding a lock across N round trips.
+        #[derive(Row, Deserialize)]
+        struct EdgeKey {
+            src_application: String,
+            dst_application: String,
+            path: String,
+            dst_port: u16,
+        }
+
+        let sql = format!(
+            "SELECT DISTINCT src_application, dst_application, path, dst_port FROM {}",
+            self.config.db.table.ebpf_network_events
+        );
+        let existing: HashSet<(String, String, String, u16)> = self
+            .client
+            .query(&sql)
+            .fetch_all::<EdgeKey>()
+            .await
+            .map_err(|e| Error::EventFetchingFailed(e.to_string()))?
+            .into_iter()
+            .map(|r| (r.src_application, r.dst_application, r.path, r.dst_port))
+            .collect();
+
+        let new_events: Vec<&EbpfNetworkEvent> = events
+            .iter()
+            .filter(|e| {
+                !existing.contains(&(
+                    e.src_application.clone(),
+                    e.dst_application.clone(),
+                    e.path.clone(),
+                    e.dst_port,
+                ))
+            })
+            .collect();
+
+        if new_events.is_empty() {
+            return Ok(());
+        }
+
         let mut insert: Insert<EbpfNetworkEvent> = self
             .client
             .insert(&self.config.db.table.ebpf_network_events)
             .await
             .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
-        for event in events {
-            insert.write(&event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        for event in new_events {
+            insert.write(event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         }
         insert.end().await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         Ok(())

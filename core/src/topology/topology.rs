@@ -1,12 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 
+/// Uniquely identifies a service node. `application_name` temporarily holds a
+/// raw IP when the pod cache hasn't resolved it to a service name yet.
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct NodeId {
     pub application_name: String,
     pub namespace:        String,
 }
 
-#[derive(Clone, Debug)]
+/// One observed HTTP call. Deduplicated by (src, dst, path, method) before
+/// being added to the graph.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Flow {
     pub source_node:      NodeId,
     pub destination_node: NodeId,
@@ -25,6 +30,7 @@ pub struct Topology {
 #[derive(Default)]
 pub struct NodeData {
     pub ip:         String,
+    /// K8s resource events (Deployment, Ingress, HPA, etc.) attached to this node.
     pub k8s_events: Vec<K8sEvent>,
 }
 
@@ -34,6 +40,34 @@ pub struct K8sEvent {
     pub resource_type: String,
     pub event_type:    String,
     pub event_data:    String,
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.namespace, self.application_name)
+    }
+}
+
+impl fmt::Display for Flow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} → {}  {} {}", self.source_node, self.destination_node, self.method, self.path)
+    }
+}
+
+impl fmt::Display for Topology {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let edge_count: usize = self.downstream.values().map(|v| v.len()).sum();
+        writeln!(f, "Topology: {} nodes, {} edges", self.nodes.len(), edge_count)?;
+        // Sort by source node key for deterministic output.
+        let mut sources: Vec<&NodeId> = self.downstream.keys().collect();
+        sources.sort_by_key(|n| format!("{}", n));
+        for src in sources {
+            for flow in &self.downstream[src] {
+                writeln!(f, "  {}", flow)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Topology {
@@ -53,8 +87,15 @@ impl Topology {
     }
 
     pub fn add_flow(&mut self, flow: Flow) {
-        self.upstream.entry(flow.destination_node.clone()).or_default().push(flow.clone());
-        self.downstream.entry(flow.source_node.clone()).or_default().push(flow);
+        let upstream_flows = self.upstream.entry(flow.destination_node.clone()).or_default();
+        if !upstream_flows.contains(&flow) {
+            upstream_flows.push(flow.clone());
+        }
+
+        let downstream_flows = self.downstream.entry(flow.source_node.clone()).or_default();
+        if !downstream_flows.contains(&flow) {
+            downstream_flows.push(flow);
+        }
     }
 
     pub fn add_k8s_event(&mut self, node: NodeId, event: K8sEvent) {
@@ -127,6 +168,122 @@ impl Topology {
                 }
             }
         }
+    }
+}
+
+/// Filtered view of the topology rooted at a single service.
+pub struct SubgraphResult {
+    pub nodes: HashSet<NodeId>,
+    /// Keyed by destination node — "who calls this service?" (BFS-tree edges only for non-root).
+    pub upstream: HashMap<NodeId, Vec<Flow>>,
+    /// Keyed by source node — "what does this service call?" (BFS-tree edges only for non-root).
+    pub downstream: HashMap<NodeId, Vec<Flow>>,
+}
+
+impl Topology {
+    /// BFS from `root` following downstream edges only up to `depth` hops.
+    ///
+    /// Root node: all incoming + all outgoing edges included.
+    /// All other visible nodes: only the single BFS-tree edge (parent → child) — cross-edges
+    /// between siblings are excluded so the graph stays unambiguous.
+    /// Callers of root are added as nodes but not expanded further.
+    pub fn get_subgraph(&self, root_app: &str, root_ns: &str, depth: u32) -> SubgraphResult {
+        let root = NodeId {
+            application_name: root_app.to_string(),
+            namespace: root_ns.to_string(),
+        };
+
+        if !self.nodes.contains_key(&root) {
+            return SubgraphResult {
+                nodes: HashSet::new(),
+                upstream: HashMap::new(),
+                downstream: HashMap::new(),
+            };
+        }
+
+        // BFS downstream from root up to `depth` hops.
+        // bfs_edges records (parent, child) pairs — the spanning tree, not cross-edges.
+        let mut visited: HashSet<NodeId> = HashSet::new();
+        let mut bfs_edges: HashSet<(NodeId, NodeId)> = HashSet::new();
+        visited.insert(root.clone());
+        let mut frontier = vec![root.clone()];
+
+        for _ in 0..depth {
+            if frontier.is_empty() {
+                break;
+            }
+            let mut next: Vec<NodeId> = Vec::new();
+            for node in &frontier {
+                if let Some(flows) = self.downstream.get(node) {
+                    for flow in flows {
+                        let dst = flow.destination_node.clone();
+                        if !visited.contains(&dst) {
+                            visited.insert(dst.clone());
+                            bfs_edges.insert((node.clone(), dst.clone()));
+                            next.push(dst);
+                        }
+                    }
+                }
+            }
+            frontier = next;
+        }
+
+        // Root callers: included as nodes but not expanded.
+        let mut all_nodes = visited.clone();
+        if let Some(inflows) = self.upstream.get(&root) {
+            for flow in inflows {
+                all_nodes.insert(flow.source_node.clone());
+            }
+        }
+
+        // Build visible edge sets.
+        let mut vis_upstream: HashMap<NodeId, Vec<Flow>> = HashMap::new();
+        let mut vis_downstream: HashMap<NodeId, Vec<Flow>> = HashMap::new();
+
+        // Root gets everything.
+        if let Some(inflows) = self.upstream.get(&root) {
+            vis_upstream.insert(root.clone(), inflows.clone());
+        }
+        if let Some(outflows) = self.downstream.get(&root) {
+            vis_downstream.insert(root.clone(), outflows.clone());
+        }
+
+        // Non-root BFS nodes: only BFS-tree edges.
+        for node in &visited {
+            if node == &root {
+                continue;
+            }
+
+            let in_flows: Vec<Flow> = self.upstream
+                .get(node)
+                .map(|flows| {
+                    flows
+                        .iter()
+                        .filter(|f| bfs_edges.contains(&(f.source_node.clone(), node.clone())))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !in_flows.is_empty() {
+                vis_upstream.insert(node.clone(), in_flows);
+            }
+
+            let out_flows: Vec<Flow> = self.downstream
+                .get(node)
+                .map(|flows| {
+                    flows
+                        .iter()
+                        .filter(|f| bfs_edges.contains(&(node.clone(), f.destination_node.clone())))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !out_flows.is_empty() {
+                vis_downstream.insert(node.clone(), out_flows);
+            }
+        }
+
+        SubgraphResult { nodes: all_nodes, upstream: vis_upstream, downstream: vis_downstream }
     }
 }
 
@@ -239,5 +396,74 @@ mod tests {
         assert!(topo.nodes.contains_key(&node("svc-b", "default")));
         // The resolved node kept its original IP (or_insert did not overwrite)
         assert_eq!(topo.nodes[&node("svc-b", "default")].ip, "10.0.0.2");
+    }
+
+    // ── get_subgraph tests ────────────────────────────────────────────────────
+
+    fn make_graph() -> Topology {
+        // Graph: caller → A → B → C, A → D
+        //                      └──── E  (B also calls E)
+        // caller calls A (so caller is a root-caller node)
+        let mut topo = Topology::new();
+        for svc in &["caller", "svc-a", "svc-b", "svc-c", "svc-d", "svc-e"] {
+            topo.add_node(node(svc, "ns"), NodeData::default());
+        }
+        topo.add_flow(flow("caller", "ns", "svc-a", "ns"));
+        topo.add_flow(flow("svc-a", "ns", "svc-b", "ns"));
+        topo.add_flow(flow("svc-a", "ns", "svc-d", "ns"));
+        topo.add_flow(flow("svc-b", "ns", "svc-c", "ns"));
+        topo.add_flow(flow("svc-b", "ns", "svc-e", "ns"));
+        topo
+    }
+
+    #[test]
+    fn subgraph_depth_1_includes_direct_callees_and_root_caller() {
+        let topo = make_graph();
+        let sg = topo.get_subgraph("svc-a", "ns", 1);
+
+        // Root (svc-a) + its direct callees (svc-b, svc-d) + its caller (caller)
+        assert!(sg.nodes.contains(&node("svc-a", "ns")));
+        assert!(sg.nodes.contains(&node("svc-b", "ns")));
+        assert!(sg.nodes.contains(&node("svc-d", "ns")));
+        assert!(sg.nodes.contains(&node("caller", "ns")));
+        // Level-2 nodes not reached yet
+        assert!(!sg.nodes.contains(&node("svc-c", "ns")));
+        assert!(!sg.nodes.contains(&node("svc-e", "ns")));
+    }
+
+    #[test]
+    fn subgraph_depth_2_reaches_level_2_nodes() {
+        let topo = make_graph();
+        let sg = topo.get_subgraph("svc-a", "ns", 2);
+
+        for svc in &["svc-a", "svc-b", "svc-c", "svc-d", "svc-e", "caller"] {
+            assert!(sg.nodes.contains(&node(svc, "ns")), "{} not in subgraph", svc);
+        }
+    }
+
+    #[test]
+    fn subgraph_cross_edges_excluded_for_non_root() {
+        // Add a cross-edge: svc-d → svc-b (sibling of svc-b, both children of svc-a)
+        let mut topo = make_graph();
+        topo.add_flow(flow("svc-d", "ns", "svc-b", "ns"));
+
+        let sg = topo.get_subgraph("svc-a", "ns", 1);
+
+        // svc-d is in the subgraph (direct callee of root)
+        assert!(sg.nodes.contains(&node("svc-d", "ns")));
+        // But the cross-edge svc-d → svc-b must NOT appear in svc-d's downstream
+        // (it's not a BFS tree edge — svc-b was discovered from svc-a, not svc-d)
+        let svc_d_out = sg.downstream.get(&node("svc-d", "ns"));
+        assert!(
+            svc_d_out.is_none() || svc_d_out.unwrap().iter().all(|f| f.destination_node != node("svc-b", "ns")),
+            "cross-edge svc-d→svc-b should be filtered"
+        );
+    }
+
+    #[test]
+    fn subgraph_unknown_root_returns_empty() {
+        let topo = make_graph();
+        let sg = topo.get_subgraph("does-not-exist", "ns", 2);
+        assert!(sg.nodes.is_empty());
     }
 }

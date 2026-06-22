@@ -4,12 +4,12 @@
 use aya_ebpf::{
     helpers::bpf_ktime_get_ns,
     macros::{map, socket_filter},
-    maps::PerfEventArray,
+    maps::{Per, PerfEventArray},
     programs::SkBuffContext,
     EbpfContext,
 };
 
-const MAX_PAYLOAD: usize = 128;
+const MAX_PAYLOAD: usize = 1024;
 
 /// TCP event with HTTP payload capture
 #[repr(C)]
@@ -26,7 +26,7 @@ pub struct TcpPayloadEvent {
 }
 
 #[map]
-static NETWORK_EVENTS: PerfEventArray<TcpPayloadEvent> = PerfEventArray::new(0);
+static NETWORK_EVENTS: RingB<TcpPayloadEvent> = PerfEventArray::new(0);
 
 const ETH_P_IP: u16 = 0x0800;
 const IPPROTO_TCP: u8 = 6;
@@ -87,7 +87,7 @@ fn try_http_filter(ctx: &SkBuffContext) -> Result<i64, i64> {
         MAX_PAYLOAD
     };
 
-    // IMPORTANT: read_volatile prevents LLVM from proving copy_len >= 1
+    // read_volatile prevents LLVM from proving copy_len >= 1
     // (which it can from the `payload_offset >= pkt_len` guard above) and
     // removing the zero-check below. Without this barrier, the compiler
     // emits JGT instead of JGE, so the verifier sees copy_len ∈ [0,127]

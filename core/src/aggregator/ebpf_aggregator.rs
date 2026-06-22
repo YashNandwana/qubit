@@ -16,7 +16,6 @@ pub struct EbpfAggregator {
     db: Arc<DAO>,
     topology: Arc<RwLock<Topology>>,
     pod_cache: Arc<Cache<String, PodInfo>>,
-    bulk_addition_data: Arc<RwLock<Vec<EbpfNetworkEvent>>>,
     /// Dedup cache: tracks which service→service pairs we've already stored.
     /// Key: "src_ns/src_svc", Value: set of "dst_ns/dst_svc".
     /// Prevents duplicate DB rows for the same dependency edge.
@@ -30,14 +29,13 @@ impl EbpfAggregator {
         db: Arc<DAO>,
         topology: Arc<RwLock<Topology>>,
         pod_cache: Arc<Cache<String, PodInfo>>,
-        envoy_cache: Arc<EnvoyDomainCache>
+        envoy_cache: Arc<EnvoyDomainCache>,
     ) -> Self {
         Self {
             config,
             db,
             topology,
             pod_cache,
-            bulk_addition_data: Arc::new(RwLock::new(Vec::new())),
             seen_edges: Arc::new(RwLock::new(HashSet::new())),
             envoy_cache,
         }
@@ -58,18 +56,18 @@ impl EbpfAggregator {
         // resolve correctly once the cache is populated. This avoids raw IPs leaking into
         // the topology during the brief startup race window.
         let pod_info = self.pod_cache.get(&src_ip);
-        let (src_namespace, src_service_owned);
+        let (src_namespace, src_service, src_application);
         match pod_info.as_ref().filter(|p| !p.application_name.is_empty()) {
             Some(p) => {
                 src_namespace = p.namespace.clone();
-                src_service_owned = p.application_name.clone();
+                src_service = p.service_name.clone();
+                src_application = p.application_name.clone();
             }
             None => {
                 log::debug!("dropping event: source IP {} not yet in pod cache", src_ip);
                 return Ok("unresolved source — waiting for pod event".to_string());
             }
         }
-        let src_service = src_service_owned.as_str();
 
         // Strip port from Host header before cache lookups — curl sends "host:port",
         // but cache keys are always bare hostnames.
@@ -77,11 +75,11 @@ impl EbpfAggregator {
 
         // Resolve destination (priority order):
         // 1. Envoy cache — authoritative; maps Host header to service/namespace for
-        //    any service Envoy knows about (both .svc FQDNs and custom domains like svc.meesho.int)
+        //    any service Envoy knows about (both application_name FQDNs and custom domains prod svc.prod.int)
         // 2. Pod cache — fallback for direct pod-to-pod traffic not routed through Envoy
         // 3. parse_k8s_host — heuristic last resort for K8s DNS names we can pattern-match
-        let (dst_service, dst_namespace) = if let Some((svc, ns)) = self.envoy_cache.get(host) {
-            (svc, ns)
+        let (dst_application, dst_namespace) = if let Some((app, ns)) = self.envoy_cache.get(host) {
+            (app, ns)
         } else {
             let dst_pod_info = self.pod_cache.get(&dst_ip);
             match dst_pod_info {
@@ -92,6 +90,17 @@ impl EbpfAggregator {
             }
         };
 
+        let dst_pod_info = self.pod_cache.get(&dst_ip);
+        let dst_service;
+        match dst_pod_info.as_ref().filter(|p| !p.service_name.is_empty()) {
+            Some(p) => {
+                dst_service = p.service_name.clone();
+            }
+            None => {
+                dst_service = dst_application.clone();
+            }
+        }
+
         // Dedup: only persist one row per (src_service → dst_service) pair.
         // The topology still gets the flow, but we don't flood ClickHouse
         // with thousands of identical dependency edges.
@@ -101,102 +110,61 @@ impl EbpfAggregator {
         );
 
         let is_new_edge = {
-            let mut seen = self.seen_edges
-                .write()
-                .map_err(|_| Error::EbpfEventRecordingFailed("seen_edges lock poisoned".to_string()))?;
+            let mut seen = self.seen_edges.write().map_err(|_| {
+                Error::EbpfEventRecordingFailed("seen_edges lock poisoned".to_string())
+            })?;
             seen.insert(edge_key)
         };
 
-        if is_new_edge {
-            let db_event = EbpfNetworkEvent {
-                timestamp_ns: input.timestamp_ns,
-                src_service: src_service.to_string(),
-                src_namespace: src_namespace.to_string(),
-                dst_service: dst_service.clone(),
-                dst_namespace: dst_namespace.clone(),
-                src_port: input.src_port,
-                dst_port: input.dst_port,
-                method: input.method.clone(),
-                path: input.path.clone(),
-                host: input.host.clone(),
-            };
-
-            log::debug!("new edge: {}", db_event);
-            self.insert_bulk_events(db_event).await?;
+        if !is_new_edge {
+            return Ok("node already exists!".to_string());
         }
 
         let source_node = NodeId {
-            application_name: src_service.to_string(),
+            application_name: src_application.to_string(),
             namespace: src_namespace.to_string(),
         };
 
         let destination_node = NodeId {
-            application_name: dst_service.to_string(),
+            application_name: dst_application.to_string(),
             namespace: dst_namespace.to_string(),
         };
 
         {
-            let mut topo = self
-                .topology
-                .write()
-                .map_err(|_| Error::EbpfEventRecordingFailed("topology lock poisoned".to_string()))?;
+            let mut topo = self.topology.write().map_err(|_| {
+                Error::EbpfEventRecordingFailed("topology lock poisoned".to_string())
+            })?;
 
-            // Only add the flow on new edges — topology needs one edge per service pair,
-            // not one per captured packet.
-            if is_new_edge {
-                let flow = Flow {
-                    source_node: source_node.clone(),
-                    destination_node: destination_node.clone(),
-                    path: input.path,
-                    method: input.method,
-                };
-                topo.add_flow(flow);
-            }
+            topo.add_node(
+                source_node.clone(),
+                NodeData {
+                    ip: src_ip.clone(),
+                    ..Default::default()
+                },
+            );
 
-            topo.add_node(source_node, NodeData {
-                ip: src_ip.clone(),
-                ..Default::default()
-            });
+            topo.add_node(
+                destination_node.clone(),
+                NodeData {
+                    ip: dst_ip,
+                    ..Default::default()
+                },
+            );
 
-            topo.add_node(destination_node, NodeData {
-                ip: dst_ip,
-                ..Default::default()
-            });
+            let flow = Flow {
+                source_node,
+                destination_node,
+                path: input.path.clone(),
+                method: input.method.clone(),
+            };
+            topo.add_flow(flow);
         }
 
-        Ok("saved event!".to_string())
+        return Ok("saved event!".to_string());
     }
 
-    async fn insert_bulk_events(&self, event: EbpfNetworkEvent) -> Result<(), Error> {
-        // Single write lock — push, check length, and conditionally drain in one acquisition.
-        // Taking a second read/write lock on the same RwLock while holding one = deadlock.
-        let events_to_flush = {
-            let mut buffer = self.bulk_addition_data
-                .write()
-                .map_err(|_| Error::EbpfEventRecordingFailed("bulk data lock poisoned".to_string()))?;
-
-            buffer.push(event);
-
-            if buffer.len() >= self.config.app.ebpf_bulk_insertion_max_size as usize {
-                Some(buffer.drain(..).collect::<Vec<_>>())
-            } else {
-                None
-            }
-        }; // write lock dropped here before the async DB call
-
-        if let Some(events) = events_to_flush {
-            self.db
-                .add_events(events)
-                .await
-                .map_err(|e| Error::EbpfEventRecordingFailed(e.to_string()))?;
-        }
-
-        Ok(())
-    }
-
-    /// Spawns a background task that flushes the bulk buffer on a fixed interval.
-    /// This ensures events reach ClickHouse even when traffic is low and the
-    /// buffer never fills to `ebpf_bulk_insertion_max_size`.
+    /// Spawns a background task that periodically snapshots the topology and
+    /// syncs all current flows to ClickHouse as a batch write.
     pub fn start_flush_timer(self: &Arc<Self>, interval_secs: u64) {
         let aggregator = Arc::clone(self);
         tokio::spawn(async move {
@@ -204,26 +172,48 @@ impl EbpfAggregator {
             loop {
                 interval.tick().await;
 
-                let events_to_flush = {
-                    let mut buffer = match aggregator.bulk_addition_data.write() {
-                        Ok(b) => b,
+                let now_ns = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64;
+
+                // Snapshot all flows from topology under a read lock.
+                // Lock is released before the async DB write so it's not held across an await.
+                let events: Vec<EbpfNetworkEvent> = {
+                    let topo = match aggregator.topology.read() {
+                        Ok(t) => t,
                         Err(_) => {
-                            log::error!("Flush timer: bulk data lock poisoned");
+                            log::error!("Flush timer: topology lock poisoned");
                             continue;
                         }
                     };
-                    if buffer.is_empty() {
-                        None
-                    } else {
-                        Some(buffer.drain(..).collect::<Vec<_>>())
-                    }
+                    log::info!("Flush timer: {}", *topo);
+                    topo.downstream
+                        .values()
+                        .flatten()
+                        .map(|flow| EbpfNetworkEvent {
+                            timestamp_ns:    now_ns,
+                            src_service:     flow.source_node.application_name.clone(),
+                            src_namespace:   flow.source_node.namespace.clone(),
+                            src_application: flow.source_node.application_name.clone(),
+                            dst_service:     flow.destination_node.application_name.clone(),
+                            dst_namespace:   flow.destination_node.namespace.clone(),
+                            dst_application: flow.destination_node.application_name.clone(),
+                            src_port: 0,
+                            dst_port: 0,
+                            method: flow.method.clone(),
+                            path:   flow.path.clone(),
+                            host:   flow.destination_node.application_name.clone(),
+                        })
+                        .collect()
                 };
 
-                if let Some(events) = events_to_flush {
-                    log::info!("Flush timer: writing {} buffered events to DB", events.len());
-                    if let Err(e) = aggregator.db.add_events(events).await {
-                        log::error!("Flush timer: DB write failed: {}", e);
-                    }
+                if events.is_empty() {
+                    continue;
+                }
+                log::info!("Flush timer: syncing {} topology flows to DB", events.len());
+                if let Err(e) = aggregator.db.add_events(events).await {
+                    log::error!("Flush timer: DB write failed: {}", e);
                 }
             }
         });
@@ -328,3 +318,4 @@ mod tests {
         assert_eq!(ns, "external");
     }
 }
+    

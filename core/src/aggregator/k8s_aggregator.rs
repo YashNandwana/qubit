@@ -5,6 +5,7 @@ use crate::dao::DAO;
 use crate::model::K8sResourceEvent;
 use crate::topology::{Topology, K8sEvent, NodeId};
 
+/// Cached metadata for a running pod, keyed by pod IP.
 #[derive(Clone)]
 pub struct PodInfo {
     pub namespace: String,
@@ -13,6 +14,7 @@ pub struct PodInfo {
     pub service_type: String,
 }
 
+/// Cached metadata for a K8s Service, keyed by `namespace/name`.
 #[derive(Clone)]
 pub struct ServiceInfo {
     pub namespace: String,
@@ -20,6 +22,8 @@ pub struct ServiceInfo {
     pub cluster_ip: String,
 }
 
+/// Maintains pod/service caches and writes K8s events to ClickHouse and
+/// the in-memory topology graph.
 pub struct K8sAggregator {
     pod_cache: Arc<Cache<String, PodInfo>>,
     service_cache: Arc<Cache<String, ServiceInfo>>,
@@ -114,6 +118,8 @@ impl K8sAggregator {
         let db = self.db.clone();
         let resource_type_owned = resource_type.to_string();
         let name_owned = name.to_string();
+        // DB write is async so it doesn't block the topology update below,
+        // which must be synchronous to be visible to arriving eBPF events immediately.
         tokio::spawn(async move {
             if let Err(e) = db.add_k8s_resource_event(db_event).await {
                 log::error!(

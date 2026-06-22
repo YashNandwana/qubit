@@ -3,7 +3,7 @@ app:
   grpc_port: 50051
   upstream: http://localhost:8080
   ebpf_bulk_insertion_max_size: 100
-  ebpf_flush_interval_secs: 5
+  ebpf_flush_interval_secs: 10
 db:
   host: localhost
   port: 8123

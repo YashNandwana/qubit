@@ -21,6 +21,7 @@ function formatAge(date: Date | null): string {
 
 export function TopologyView({ onStatusChange, refreshKey }: TopologyViewProps) {
   const [raw, setRaw] = useState<QubitTopology | null>(null);
+  const [subgraphData, setSubgraphData] = useState<QubitTopology | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -47,6 +48,27 @@ export function TopologyView({ onStatusChange, refreshKey }: TopologyViewProps) 
     }
   }, [onStatusChange]);
 
+  // Fetches a BFS-filtered subgraph from the backend when a node is selected.
+  // The backend owns the BFS logic; the frontend just renders what it receives.
+  const fetchSubgraph = useCallback(async (nodeId: string, bfsDepth: number) => {
+    const slashIdx = nodeId.indexOf('/');
+    if (slashIdx === -1) return;
+    const namespace = nodeId.slice(0, slashIdx);
+    const service = nodeId.slice(slashIdx + 1);
+    // Send 999 for Infinity — the BFS terminates naturally when the graph is exhausted.
+    const depthParam = bfsDepth === Infinity ? 999 : bfsDepth;
+    try {
+      const res = await fetch(
+        `/api/topology/subgraph?service=${encodeURIComponent(service)}&namespace=${encodeURIComponent(namespace)}&depth=${depthParam}`
+      );
+      if (!res.ok) return;
+      const data: QubitTopology = await res.json();
+      setSubgraphData(data);
+    } catch {
+      // Silently fall back to full topology on error.
+    }
+  }, []);
+
   // Initial fetch + re-fetch on nav refresh button.
   // fetchTopology is stable (useCallback with stable deps), so this runs once
   // on mount and again each time refreshKey increments.
@@ -58,17 +80,27 @@ export function TopologyView({ onStatusChange, refreshKey }: TopologyViewProps) 
     return () => clearInterval(id);
   }, [autoRefresh, fetchTopology]);
 
-  // Memoize on `raw` so services/connections are stable references between renders.
-  // Without this, every TopologyView re-render creates new arrays → initialNodes
-  // recomputes → position-reset effect fires → drag positions clobbered.
+  // When a node is selected use the backend-filtered subgraph; otherwise show the full topology.
+  // The useMemo keys include subgraphData so the graph updates when a new subgraph arrives.
+  const displayData = selectedNodeId && subgraphData ? subgraphData : raw;
   const { services, connections, rootService } = useMemo(
-    () => transformTopologyData(raw),
-    [raw]
+    () => transformTopologyData(displayData),
+    [displayData]
   );
 
   useEffect(() => {
     if (rootService && !selectedNodeId) setSelectedNodeId(rootService);
   }, [rootService, selectedNodeId]);
+
+  // Re-fetch subgraph whenever the selected node or depth changes.
+  // Clear subgraphData when selection is cleared so full topology shows again.
+  useEffect(() => {
+    if (selectedNodeId) {
+      fetchSubgraph(selectedNodeId, depth);
+    } else {
+      setSubgraphData(null);
+    }
+  }, [selectedNodeId, depth, fetchSubgraph]);
 
   const serviceOptions = [...services].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -132,6 +164,7 @@ export function TopologyView({ onStatusChange, refreshKey }: TopologyViewProps) 
             hideUnconnectedNodes={hideUnconnected}
             selectedNodeId={selectedNodeId}
             onNodeSelect={setSelectedNodeId}
+            isSubgraphMode={!!(selectedNodeId && subgraphData)}
           />
         </div>
       )}

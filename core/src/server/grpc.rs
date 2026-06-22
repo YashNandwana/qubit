@@ -24,6 +24,8 @@ use super::qubit::{
     FILE_DESCRIPTOR_SET,
 };
 
+/// Implements the `EventIngestion` gRPC service. Owns both aggregators and
+/// is created once per server lifecycle inside `do_serve`.
 pub struct GrpcServer {
     config: Arc<QubitConfig>,
     ebpf_aggregator: Arc<EbpfAggregator>,
@@ -81,6 +83,8 @@ impl EventIngestion for GrpcServer {
             host: req.host,
         };
 
+        // eBPF events arrive at high frequency — spawn so the gRPC handler
+        // returns immediately rather than blocking the server thread.
         let aggregator = self.ebpf_aggregator.clone();
         tokio::spawn(async move {
             let _ = aggregator.record_ebpf_event(input).await;
@@ -143,6 +147,8 @@ impl EventIngestion for GrpcServer {
         &self,
         request: Request<ConfigMapEventRequest>,
     ) -> Result<Response<ConfigMapEventResponse>, Status> {
+        // ConfigMap events carry only metadata here; Envoy route parsing
+        // happens in the cluster-agent and arrives via send_envoy_routes.
         let req = request.into_inner();
         match K8sEventType::try_from(req.event_type) {
             Ok(K8sEventType::Applied) => log::info!("ConfigMap applied: {}/{}", req.namespace, req.name),

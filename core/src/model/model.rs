@@ -30,13 +30,15 @@ impl EbpfNetworkEventInput {
 /// Event stored in ClickHouse — uses resolved service names, not raw IPs.
 /// The AI agent queries by service name ("show me traffic from service-a"),
 /// so storing resolved names avoids a lookup at query time.
-#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+#[derive(Debug, Clone, Serialize, Deserialize, Row, PartialEq, Eq, Hash)]
 pub struct EbpfNetworkEvent {
     pub timestamp_ns: u64,
     pub src_service: String,
     pub src_namespace: String,
+    pub src_application: String,
     pub dst_service: String,
     pub dst_namespace: String,
+    pub dst_application: String,
     pub src_port: u16,
     pub dst_port: u16,
     pub method: String,
@@ -50,8 +52,10 @@ impl EbpfNetworkEvent {
         timestamp_ns UInt64,
         src_service String,
         src_namespace String,
+        src_application String,
         dst_service String,
         dst_namespace String,
+        dst_application String,
         src_port UInt16,
         dst_port UInt16,
         method String,
@@ -93,12 +97,14 @@ impl fmt::Display for EbpfNetworkEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "HTTP: {}/{}:{} --> {}/{}:{} | {} {} | host={}",
+            "HTTP: {}/{}/{}:{} --> {}/{}/{}:{} | {} {} | host={}",
             self.src_namespace,
             self.src_service,
+            self.src_application,
             self.src_port,
             self.dst_namespace,
             self.dst_service,
+            self.dst_application,
             self.dst_port,
             self.method,
             self.path,

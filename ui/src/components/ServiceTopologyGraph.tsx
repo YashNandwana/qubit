@@ -30,6 +30,8 @@ interface ServiceTopologyGraphProps {
   hideUnconnectedNodes?: boolean;
   selectedNodeId?: string;
   onNodeSelect?: (nodeId: string) => void;
+  /// When true the backend already BFS-filtered the data; skip client-side depth filtering.
+  isSubgraphMode?: boolean;
 }
 
 function ServiceTopologyGraphInner({
@@ -40,6 +42,7 @@ function ServiceTopologyGraphInner({
   hideUnconnectedNodes = false,
   selectedNodeId: propSelectedNodeId,
   onNodeSelect,
+  isSubgraphMode = false,
 }: ServiceTopologyGraphProps) {
   const [internalSelectedNodeId, setInternalSelectedNodeId] = useState<string | null>(
     rootService ?? null
@@ -56,12 +59,12 @@ function ServiceTopologyGraphInner({
     [services, connections, rootService]
   );
 
-  // BFS from selected node up to `depth` hops. When no node is selected,
-  // the reachable set is all nodes (show everything).
+  // BFS from selected node up to `depth` hops. When no node is selected, or when the
+  // backend already filtered the data (isSubgraphMode), all nodes are reachable.
   const reachableNodeIds = useMemo(() => {
-    if (!selectedNodeId) return new Set(initialNodes.map(n => n.id));
+    if (!selectedNodeId || isSubgraphMode) return new Set(initialNodes.map(n => n.id));
     return getConnectedNodeIdsAtDepth(selectedNodeId, connections, depth);
-  }, [selectedNodeId, connections, depth, initialNodes]);
+  }, [selectedNodeId, connections, depth, initialNodes, isSubgraphMode]);
 
   // Which nodes are visible. Without hideUnconnectedNodes this is always all nodes;
   // with it, trimmed to the reachable set.
