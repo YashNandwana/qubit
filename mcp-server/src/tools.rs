@@ -1,7 +1,7 @@
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
-use rmcp::model::{ServerCapabilities, ServerInfo, Implementation};
+use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -62,7 +62,9 @@ pub struct GetNetworkEventsInput {
 impl QubitMcp {
     /// Returns the full service topology — all discovered services and their
     /// HTTP dependencies as captured by the eBPF probe.
-    #[tool(description = "Get the full service topology — all services and their HTTP dependencies")]
+    #[tool(
+        description = "Get the full service topology — all services and their HTTP dependencies"
+    )]
     async fn get_topology(&self) -> String {
         let topo = match self.grpc.get_topology().await {
             Ok(t) => t,
@@ -70,7 +72,8 @@ impl QubitMcp {
         };
 
         if topo.nodes.is_empty() {
-            return "No services discovered yet. The cluster may not have traffic flowing.".to_string();
+            return "No services discovered yet. The cluster may not have traffic flowing."
+                .to_string();
         }
 
         let mut out = format!("Service Topology ({} services):\n", topo.nodes.len());
@@ -90,8 +93,10 @@ impl QubitMcp {
                 for edge in &flow_list.flows {
                     out.push_str(&format!(
                         "    → {} {} → {}/{}\n",
-                        edge.method, edge.path,
-                        edge.destination_namespace, edge.destination_application
+                        edge.method,
+                        edge.path,
+                        edge.destination_namespace,
+                        edge.destination_application
                     ));
                 }
             }
@@ -129,8 +134,7 @@ impl QubitMcp {
                 for edge in &flow_list.flows {
                     out.push_str(&format!(
                         "    ← {}/{} ({} {})\n",
-                        edge.source_namespace, edge.source_application,
-                        edge.method, edge.path
+                        edge.source_namespace, edge.source_application, edge.method, edge.path
                     ));
                 }
             }
@@ -143,8 +147,10 @@ impl QubitMcp {
                 for edge in &flow_list.flows {
                     out.push_str(&format!(
                         "    → {}/{} ({} {})\n",
-                        edge.destination_namespace, edge.destination_application,
-                        edge.method, edge.path
+                        edge.destination_namespace,
+                        edge.destination_application,
+                        edge.method,
+                        edge.path
                     ));
                 }
             }
@@ -156,11 +162,10 @@ impl QubitMcp {
 
     /// Queries recent Kubernetes resource events from ClickHouse.
     /// Returns deployments, events, HPA changes, etc. from the last N minutes.
-    #[tool(description = "Query recent Kubernetes resource events (deployments, scaling events, errors, etc.)")]
-    async fn get_k8s_events(
-        &self,
-        Parameters(input): Parameters<GetK8sEventsInput>,
-    ) -> String {
+    #[tool(
+        description = "Query recent Kubernetes resource events (deployments, scaling events, errors, etc.)"
+    )]
+    async fn get_k8s_events(&self, Parameters(input): Parameters<GetK8sEventsInput>) -> String {
         let minutes = input.last_minutes.unwrap_or(60);
         let rows = match self
             .ch
@@ -179,7 +184,11 @@ impl QubitMcp {
             return format!("No K8s events found in the last {} minutes.", minutes);
         }
 
-        let mut out = format!("K8s Events (last {} min, {} results):\n\n", minutes, rows.len());
+        let mut out = format!(
+            "K8s Events (last {} min, {} results):\n\n",
+            minutes,
+            rows.len()
+        );
         for row in &rows {
             out.push_str(&format!(
                 "  [{}] {} {}/{} — {}\n",
@@ -225,9 +234,15 @@ impl QubitMcp {
         for row in &rows {
             out.push_str(&format!(
                 "  {}/{}:{} → {}/{}:{} | {} {} | host={}\n",
-                row.src_namespace, row.src_service, row.src_port,
-                row.dst_namespace, row.dst_service, row.dst_port,
-                row.method, row.path, row.host
+                row.src_namespace,
+                row.src_service,
+                row.src_port,
+                row.dst_namespace,
+                row.dst_service,
+                row.dst_port,
+                row.method,
+                row.path,
+                row.host
             ));
         }
 

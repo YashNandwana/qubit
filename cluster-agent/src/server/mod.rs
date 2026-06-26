@@ -15,7 +15,10 @@ pub async fn run(
     aggregator: Arc<ClusterAggregator>,
 ) -> anyhow::Result<()> {
     if let Err(e) = send_initial_pod_service_map(client.clone(), aggregator.clone()).await {
-        log::warn!("Initial pod-service map failed (core may not be ready yet): {}", e);
+        log::warn!(
+            "Initial pod-service map failed (core may not be ready yet): {}",
+            e
+        );
     }
 
     // Re-send the full pod map and envoy routes every 30s. This covers two cases:
@@ -29,10 +32,14 @@ pub async fn run(
             ticker.tick().await; // first tick fires immediately — skip it, already sent above
             loop {
                 ticker.tick().await;
-                if let Err(e) = send_initial_pod_service_map(client.clone(), aggregator.clone()).await {
+                if let Err(e) =
+                    send_initial_pod_service_map(client.clone(), aggregator.clone()).await
+                {
                     log::warn!("Pod-service map resync failed: {}", e);
                 }
-                if let Err(e) = send_envoy_routes_from_configmaps(client.clone(), aggregator.clone()).await {
+                if let Err(e) =
+                    send_envoy_routes_from_configmaps(client.clone(), aggregator.clone()).await
+                {
                     log::warn!("Envoy routes resync failed: {}", e);
                 }
             }
@@ -42,7 +49,10 @@ pub async fn run(
     // Send envoy routes on startup (cluster-agent already has ConfigMaps from informer cache,
     // but the initial configmap handler fires before core is ready — resync covers that gap).
     if let Err(e) = send_envoy_routes_from_configmaps(client.clone(), aggregator.clone()).await {
-        log::warn!("Initial envoy routes send failed (core may not be ready yet): {}", e);
+        log::warn!(
+            "Initial envoy routes send failed (core may not be ready yet): {}",
+            e
+        );
     }
 
     let informers = Controller::new(config, aggregator).create_informers();
@@ -77,9 +87,17 @@ pub async fn run(
     // returns 404 immediately. Dropping the handle detaches the task so its
     // completion doesn't trigger the select! below and kill the whole server.
     drop(spawn_informer!("Rollout", informers.rollout, client));
-    drop(spawn_informer!("ExternalSecret", informers.external_secret, client));
+    drop(spawn_informer!(
+        "ExternalSecret",
+        informers.external_secret,
+        client
+    ));
     drop(spawn_informer!("HTTPProxy", informers.http_proxy, client));
-    drop(spawn_informer!("VirtualService", informers.virtual_service, client));
+    drop(spawn_informer!(
+        "VirtualService",
+        informers.virtual_service,
+        client
+    ));
 
     log::info!("Started all cluster informers");
 
@@ -156,14 +174,19 @@ async fn send_initial_pod_service_map(
         if selector.is_empty() {
             continue;
         }
-        let service_type = spec.type_.clone().unwrap_or_else(|| "ClusterIP".to_string());
+        let service_type = spec
+            .type_
+            .clone()
+            .unwrap_or_else(|| "ClusterIP".to_string());
 
         let pod_ips: Vec<String> = pod_list
             .items
             .iter()
             .filter(|pod| {
                 let labels = pod.metadata.labels.as_ref();
-                selector.iter().all(|(k, v)| labels.and_then(|l| l.get(k)) == Some(v))
+                selector
+                    .iter()
+                    .all(|(k, v)| labels.and_then(|l| l.get(k)) == Some(v))
             })
             .filter_map(|pod| pod.status.as_ref()?.pod_ip.clone())
             .collect();
@@ -173,7 +196,10 @@ async fn send_initial_pod_service_map(
         }
     }
 
-    log::info!("Sending initial pod-service map: {} service entries", entries.len());
+    log::info!(
+        "Sending initial pod-service map: {} service entries",
+        entries.len()
+    );
     aggregator.send_service_pod_map(entries).await?;
     Ok(())
 }

@@ -21,7 +21,11 @@ struct Args {
     #[arg(long, default_value = "0", env = "HTTP_RPS")]
     http_rps: u32,
 
-    #[arg(long, default_value = "http://service-b.default.svc.cluster.local/", env = "HTTP_TARGET")]
+    #[arg(
+        long,
+        default_value = "http://service-b.default.svc.cluster.local/",
+        env = "HTTP_TARGET"
+    )]
     http_target: String,
 
     #[arg(long, default_value = "load-gen", env = "K8S_NAMESPACE")]
@@ -38,10 +42,17 @@ struct Stats {
 }
 
 impl Stats {
-    fn ok(&self) { self.sent.fetch_add(1, Ordering::Relaxed); }
-    fn err(&self) { self.errors.fetch_add(1, Ordering::Relaxed); }
+    fn ok(&self) {
+        self.sent.fetch_add(1, Ordering::Relaxed);
+    }
+    fn err(&self) {
+        self.errors.fetch_add(1, Ordering::Relaxed);
+    }
     fn snapshot(&self) -> (u64, u64) {
-        (self.sent.load(Ordering::Relaxed), self.errors.load(Ordering::Relaxed))
+        (
+            self.sent.load(Ordering::Relaxed),
+            self.errors.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -51,7 +62,12 @@ fn ticker(rps: u32) -> tokio::time::Interval {
 
 // Cycles through create / patch / delete on a pool of ConfigMaps.
 // Pool capped at 50 to avoid unbounded growth; cleaned up on exit.
-async fn k8s_stream(namespace: String, rps: u32, duration: Duration, stats: Arc<Stats>) -> Result<()> {
+async fn k8s_stream(
+    namespace: String,
+    rps: u32,
+    duration: Duration,
+    stats: Arc<Stats>,
+) -> Result<()> {
     let client = Client::try_default().await?;
     let cms: Api<ConfigMap> = Api::namespaced(client, &namespace);
 
@@ -68,7 +84,13 @@ async fn k8s_stream(namespace: String, rps: u32, duration: Duration, stats: Arc<
         } else {
             match tick % 10 {
                 0..=5 => "patch",
-                6..=7 => if pool.len() < 50 { "create" } else { "patch" },
+                6..=7 => {
+                    if pool.len() < 50 {
+                        "create"
+                    } else {
+                        "patch"
+                    }
+                }
                 _ => "delete",
             }
         };
@@ -77,24 +99,34 @@ async fn k8s_stream(namespace: String, rps: u32, duration: Duration, stats: Arc<
             "patch" => {
                 let name = pool[tick as usize % pool.len()].clone();
                 let patch = serde_json::json!({ "data": { "tick": tick.to_string() } });
-                cms.patch(&name, &PatchParams::default(), &Patch::Merge(patch)).await.map(|_| ())
+                cms.patch(&name, &PatchParams::default(), &Patch::Merge(patch))
+                    .await
+                    .map(|_| ())
             }
             "create" => {
                 let name = format!("load-gen-{}", tick);
                 let mut data = BTreeMap::new();
                 data.insert("tick".to_string(), tick.to_string());
                 let cm = ConfigMap {
-                    metadata: ObjectMeta { name: Some(name.clone()), namespace: Some(namespace.clone()), ..Default::default() },
+                    metadata: ObjectMeta {
+                        name: Some(name.clone()),
+                        namespace: Some(namespace.clone()),
+                        ..Default::default()
+                    },
                     data: Some(data),
                     ..Default::default()
                 };
                 let r = cms.create(&PostParams::default(), &cm).await.map(|_| ());
-                if r.is_ok() { pool.push(name); }
+                if r.is_ok() {
+                    pool.push(name);
+                }
                 r
             }
             _ => {
                 let name = pool.remove(0);
-                cms.delete(&name, &DeleteParams::default()).await.map(|_| ())
+                cms.delete(&name, &DeleteParams::default())
+                    .await
+                    .map(|_| ())
             }
         };
 
@@ -111,9 +143,22 @@ async fn k8s_stream(namespace: String, rps: u32, duration: Duration, stats: Arc<
     Ok(())
 }
 
-async fn http_stream(target: String, rps: u32, duration: Duration, stats: Arc<Stats>) -> Result<()> {
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(5)).build()?;
-    let paths = ["/", "/api/v1/users", "/api/v1/orders", "/api/v1/status", "/metrics"];
+async fn http_stream(
+    target: String,
+    rps: u32,
+    duration: Duration,
+    stats: Arc<Stats>,
+) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let paths = [
+        "/",
+        "/api/v1/users",
+        "/api/v1/orders",
+        "/api/v1/status",
+        "/metrics",
+    ];
 
     let mut t = ticker(rps);
     let deadline = Instant::now() + duration;
@@ -121,7 +166,11 @@ async fn http_stream(target: String, rps: u32, duration: Duration, stats: Arc<St
 
     while Instant::now() < deadline {
         t.tick().await;
-        let url = format!("{}{}", target.trim_end_matches('/'), paths[tick % paths.len()]);
+        let url = format!(
+            "{}{}",
+            target.trim_end_matches('/'),
+            paths[tick % paths.len()]
+        );
         match client.get(&url).send().await {
             Ok(_) => stats.ok(),
             Err(_) => stats.err(),
@@ -142,20 +191,37 @@ async fn main() -> Result<()> {
 
     let duration = Duration::from_secs(args.duration);
 
-    println!("load-gen  duration={}s  k8s={}rps  http={}rps", args.duration, args.k8s_rps, args.http_rps);
+    println!(
+        "load-gen  duration={}s  k8s={}rps  http={}rps",
+        args.duration, args.k8s_rps, args.http_rps
+    );
 
     let k8s_stats = Arc::new(Stats::default());
     let http_stats = Arc::new(Stats::default());
     let mut tasks = Vec::new();
 
     if args.k8s_rps > 0 {
-        let (ns, rps, dur, s) = (args.k8s_namespace.clone(), args.k8s_rps, duration, Arc::clone(&k8s_stats));
-        tasks.push(tokio::spawn(async move { k8s_stream(ns, rps, dur, s).await }));
+        let (ns, rps, dur, s) = (
+            args.k8s_namespace.clone(),
+            args.k8s_rps,
+            duration,
+            Arc::clone(&k8s_stats),
+        );
+        tasks.push(tokio::spawn(
+            async move { k8s_stream(ns, rps, dur, s).await },
+        ));
     }
 
     if args.http_rps > 0 {
-        let (tgt, rps, dur, s) = (args.http_target.clone(), args.http_rps, duration, Arc::clone(&http_stats));
-        tasks.push(tokio::spawn(async move { http_stream(tgt, rps, dur, s).await }));
+        let (tgt, rps, dur, s) = (
+            args.http_target.clone(),
+            args.http_rps,
+            duration,
+            Arc::clone(&http_stats),
+        );
+        tasks.push(tokio::spawn(
+            async move { http_stream(tgt, rps, dur, s).await },
+        ));
     }
 
     // Print progress every 5s
@@ -170,16 +236,28 @@ async fn main() -> Result<()> {
             interval.tick().await;
             if k8s_rps > 0 {
                 let (sent, err) = k.snapshot();
-                println!("  [{:.0}s] k8s  {} ok  {} err", start.elapsed().as_secs_f64(), sent, err);
+                println!(
+                    "  [{:.0}s] k8s  {} ok  {} err",
+                    start.elapsed().as_secs_f64(),
+                    sent,
+                    err
+                );
             }
             if http_rps > 0 {
                 let (sent, err) = h.snapshot();
-                println!("  [{:.0}s] http {} ok  {} err", start.elapsed().as_secs_f64(), sent, err);
+                println!(
+                    "  [{:.0}s] http {} ok  {} err",
+                    start.elapsed().as_secs_f64(),
+                    sent,
+                    err
+                );
             }
         }
     });
 
-    for task in tasks { task.await??; }
+    for task in tasks {
+        task.await??;
+    }
     reporter.abort();
 
     let (k8s_sent, k8s_err) = k8s_stats.snapshot();
@@ -187,8 +265,22 @@ async fn main() -> Result<()> {
     let secs = args.duration as f64;
 
     println!("\n--- summary ---");
-    if args.k8s_rps > 0 { println!("  k8s   {} ok  {} err  ({:.0}/s)", k8s_sent, k8s_err, k8s_sent as f64 / secs); }
-    if args.http_rps > 0 { println!("  http  {} ok  {} err  ({:.0}/s)", http_sent, http_err, http_sent as f64 / secs); }
+    if args.k8s_rps > 0 {
+        println!(
+            "  k8s   {} ok  {} err  ({:.0}/s)",
+            k8s_sent,
+            k8s_err,
+            k8s_sent as f64 / secs
+        );
+    }
+    if args.http_rps > 0 {
+        println!(
+            "  http  {} ok  {} err  ({:.0}/s)",
+            http_sent,
+            http_err,
+            http_sent as f64 / secs
+        );
+    }
 
     Ok(())
 }

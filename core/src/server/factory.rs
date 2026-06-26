@@ -17,8 +17,18 @@ pub struct ServerFactory {
 }
 
 impl ServerFactory {
-    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>, cache: Arc<EnvoyDomainCache>) -> Self {
-        Self { config, db, topology, cache }
+    pub fn new(
+        config: Arc<QubitConfig>,
+        db: Arc<DAO>,
+        topology: Arc<RwLock<Topology>>,
+        cache: Arc<EnvoyDomainCache>,
+    ) -> Self {
+        Self {
+            config,
+            db,
+            topology,
+            cache,
+        }
     }
 
     pub fn http(&self) -> HttpServer {
@@ -26,7 +36,12 @@ impl ServerFactory {
     }
 
     pub fn grpc(&self) -> GrpcServer {
-        GrpcServer::new(self.config.clone(), self.db.clone(), self.topology.clone(), self.cache.clone())
+        GrpcServer::new(
+            self.config.clone(),
+            self.db.clone(),
+            self.topology.clone(),
+            self.cache.clone(),
+        )
     }
 
     pub fn query(&self) -> QueryServer {

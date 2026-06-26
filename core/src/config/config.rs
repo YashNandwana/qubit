@@ -62,10 +62,10 @@ static CONFIG: OnceLock<Arc<QubitConfig>> = OnceLock::new();
 pub fn init_config() -> Arc<QubitConfig> {
     CONFIG
         .get_or_init(|| {
-            let config_str = fs::read_to_string(CONFIG_FILE_PATH)
-                .expect("Failed to read config file");
-            let parsed: QubitConfig = serde_yaml::from_str(&config_str)
-                .expect("Failed to parse config file");
+            let config_str =
+                fs::read_to_string(CONFIG_FILE_PATH).expect("Failed to read config file");
+            let parsed: QubitConfig =
+                serde_yaml::from_str(&config_str).expect("Failed to parse config file");
             Arc::new(parsed)
         })
         .clone()

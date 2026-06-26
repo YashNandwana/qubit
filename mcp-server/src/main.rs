@@ -17,9 +17,7 @@ async fn main() -> Result<()> {
     // CRITICAL: all logging goes to stderr.
     // stdout is reserved for MCP's JSON-RPC protocol stream.
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("qubit_mcp=info".parse()?),
-        )
+        .with_env_filter(EnvFilter::from_default_env().add_directive("qubit_mcp=info".parse()?))
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();

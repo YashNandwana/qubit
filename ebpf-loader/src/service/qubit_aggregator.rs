@@ -25,10 +25,7 @@ impl QubitAggregator {
         }
     }
 
-    pub async fn record_ebpf_event(
-        &self,
-        event: EbpfNetworkEvent,
-    ) -> Result<(), tonic::Status> {
+    pub async fn record_ebpf_event(&self, event: EbpfNetworkEvent) -> Result<(), tonic::Status> {
         let request = EbpfNetworkEventRequest {
             timestamp_ns: event.timestamp_ns,
             src_ip: event.src_ip,

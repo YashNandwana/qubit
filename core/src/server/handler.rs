@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::dao::DAO;
 use crate::model::{EbpfNetworkEvent, K8sResourceEvent};
@@ -50,9 +50,7 @@ pub struct FlowDto {
     pub path: String,
 }
 
-pub async fn topology(
-    State(topology): State<Arc<RwLock<Topology>>>,
-) -> Json<TopologyResponse> {
+pub async fn topology(State(topology): State<Arc<RwLock<Topology>>>) -> Json<TopologyResponse> {
     let topo = topology.read().unwrap();
 
     let nodes = topo
@@ -109,7 +107,11 @@ pub async fn topology(
         })
         .collect();
 
-    Json(TopologyResponse { nodes, upstream, downstream })
+    Json(TopologyResponse {
+        nodes,
+        upstream,
+        downstream,
+    })
 }
 
 // ── /api/topology/subgraph ────────────────────────────────────────────────────
@@ -186,7 +188,11 @@ pub async fn topology_subgraph(
         })
         .collect();
 
-    Json(TopologyResponse { nodes, upstream, downstream })
+    Json(TopologyResponse {
+        nodes,
+        upstream,
+        downstream,
+    })
 }
 
 // ── Pagination helpers ────────────────────────────────────────────────────────
@@ -223,7 +229,12 @@ pub async fn k8s_events(
 
     match db.get_k8s_events_paginated(page, page_size).await {
         Ok((items, total)) => {
-            let body = PagedResponse::<K8sResourceEvent> { items, total, page, page_size };
+            let body = PagedResponse::<K8sResourceEvent> {
+                items,
+                total,
+                page,
+                page_size,
+            };
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(e) => {
@@ -244,7 +255,12 @@ pub async fn network_events(
 
     match db.get_network_events_paginated(page, page_size).await {
         Ok((items, total)) => {
-            let body = PagedResponse::<EbpfNetworkEvent> { items, total, page, page_size };
+            let body = PagedResponse::<EbpfNetworkEvent> {
+                items,
+                total,
+                page,
+                page_size,
+            };
             (StatusCode::OK, Json(body)).into_response()
         }
         Err(e) => {

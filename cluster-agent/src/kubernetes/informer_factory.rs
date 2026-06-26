@@ -34,9 +34,9 @@ impl InformerFactory {
             registry: Arc::new(ServiceRegistry::new()),
         }
     }
-    
+
     // ── Native K8s resources using GenericHandler ────────────────────
-    
+
     pub fn create_configmap_informer(&self) -> Arc<dyn Informer + Send + Sync> {
         InformerGeneric::<ConfigMap, ConfigMapHandler>::new(
             self.config.clone(),

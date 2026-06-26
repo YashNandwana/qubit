@@ -6,9 +6,7 @@ use tonic::{Request, Response, Status};
 use crate::topology::{NodeId, Topology};
 
 use super::qubit::qubit_query_server::QubitQuery;
-use super::qubit::{
-    FlowList, GetTopologyRequest, GetTopologyResponse, TopologyEdge, TopologyNode,
-};
+use super::qubit::{FlowList, GetTopologyRequest, GetTopologyResponse, TopologyEdge, TopologyNode};
 
 pub struct QueryServer {
     topology: Arc<RwLock<Topology>>,

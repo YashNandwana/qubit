@@ -1,5 +1,5 @@
-pub mod model;
 pub mod error;
+pub mod model;
 
-pub use model::*;
 pub use error::*;
+pub use model::*;

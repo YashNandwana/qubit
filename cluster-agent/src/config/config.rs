@@ -27,7 +27,9 @@ pub struct KubernetesConfig {
 
 impl Default for KubernetesConfig {
     fn default() -> Self {
-        Self { namespace: String::new() }
+        Self {
+            namespace: String::new(),
+        }
     }
 }
 

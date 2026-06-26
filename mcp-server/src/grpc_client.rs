@@ -19,8 +19,7 @@ pub struct GrpcClient {
 
 impl GrpcClient {
     pub fn new(address: &str) -> Result<Self> {
-        let channel = tonic::transport::Channel::from_shared(address.to_string())?
-            .connect_lazy();
+        let channel = tonic::transport::Channel::from_shared(address.to_string())?.connect_lazy();
         Ok(Self {
             client: QubitQueryClient::new(channel),
         })

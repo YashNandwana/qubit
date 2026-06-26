@@ -28,7 +28,9 @@ use crate::topology::Topology;
 /// simply aborted when the test harness drops.
 pub async fn run(config: Arc<QubitConfig>) -> anyhow::Result<()> {
     let db = Arc::new(DAO::new(config.clone()).map_err(|e| anyhow::anyhow!(e))?);
-    db.initialize_schema().await.map_err(|e| anyhow::anyhow!(e))?;
+    db.initialize_schema()
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
     log::info!("DB initialized");
 
     let topology = Arc::new(RwLock::new(Topology::new()));
@@ -39,13 +41,10 @@ pub async fn run(config: Arc<QubitConfig>) -> anyhow::Result<()> {
     let grpc = factory.grpc();
     let query = factory.query();
 
-    let mut http_handle = tokio::spawn(async move {
-        http.do_serve().await.map_err(|e| e.to_string())
-    });
+    let mut http_handle =
+        tokio::spawn(async move { http.do_serve().await.map_err(|e| e.to_string()) });
 
-    let mut grpc_handle = tokio::spawn(async move {
-        grpc.do_serve(query).await
-    });
+    let mut grpc_handle = tokio::spawn(async move { grpc.do_serve(query).await });
 
     tokio::select! {
         res = &mut http_handle => {

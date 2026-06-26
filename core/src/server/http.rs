@@ -69,11 +69,11 @@ impl HttpServer {
         info!("Starting HTTP server on {}", addr);
 
         let app = Router::new()
-            .route("/ping",                    get(handler::health))
-            .route("/api/topology",            get(handler::topology))
-            .route("/api/topology/subgraph",   get(handler::topology_subgraph))
-            .route("/api/k8s-events",          get(handler::k8s_events))
-            .route("/api/network-events",      get(handler::network_events))
+            .route("/ping", get(handler::health))
+            .route("/api/topology", get(handler::topology))
+            .route("/api/topology/subgraph", get(handler::topology_subgraph))
+            .route("/api/k8s-events", get(handler::k8s_events))
+            .route("/api/network-events", get(handler::network_events))
             .with_state(self.state.clone())
             .layer(CorsLayer::permissive());
 
