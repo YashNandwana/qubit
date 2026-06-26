@@ -1,10 +1,16 @@
 # Qubit
 
-**eBPF-based Service Dependency Mapper for Kubernetes**
+**eBPF-powered Kubernetes observability for AI agents**
 
-Qubit automatically discovers and maps service-to-service HTTP dependencies in Kubernetes clusters by monitoring network traffic at the kernel level. No code changes, no sidecars, no instrumentation SDKs required.
+Qubit captures live HTTP service dependencies at the kernel level and exposes them via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) — so you can ask Claude about your service topology, recent Kubernetes events, and raw network traffic without touching your application code.
 
-Unlike service meshes (Istio, Linkerd) or APM agents (Datadog, New Relic), Qubit requires nothing from the application — it observes actual HTTP traffic at the OS kernel level via eBPF, then correlates packets with Kubernetes metadata to produce an accurate, real-time service dependency graph. It also resolves through transparent proxies like Envoy with no manual configuration.
+```
+> which services depend on payments-service?
+> what changed in my service graph in the last hour?
+> show me all traffic between checkout and inventory
+```
+
+No sidecars. No instrumentation SDKs. No code changes. Qubit attaches an eBPF filter to each node's network interface, intercepts HTTP packets at the OS kernel level, and correlates them with Kubernetes metadata to build a real-time dependency graph — including traffic routed through transparent proxies like Envoy.
 
 ## Status
 
