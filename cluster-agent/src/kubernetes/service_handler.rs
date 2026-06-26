@@ -13,7 +13,10 @@ pub struct ServiceHandler {
 
 impl ServiceHandler {
     pub fn new(aggregator: Arc<ClusterAggregator>, registry: Arc<ServiceRegistry>) -> Self {
-        Self { aggregator, registry }
+        Self {
+            aggregator,
+            registry,
+        }
     }
 }
 
@@ -40,7 +43,10 @@ impl EventHandler<Service> for ServiceHandler {
         self.registry.deregister(&name, &namespace);
         let aggregator = self.aggregator.clone();
         tokio::spawn(async move {
-            if let Err(e) = aggregator.send_service_deleted(name.clone(), namespace).await {
+            if let Err(e) = aggregator
+                .send_service_deleted(name.clone(), namespace)
+                .await
+            {
                 log::error!("Failed to send service deleted (name={}): {}", name, e);
             }
         });
@@ -59,7 +65,10 @@ fn extract_fields(svc: &Service) -> Option<(String, String, String, String)> {
     let name = svc.metadata.name.clone()?;
     let namespace = svc.metadata.namespace.clone().unwrap_or_default();
     let spec = svc.spec.as_ref()?;
-    let service_type = spec.type_.clone().unwrap_or_else(|| "ClusterIP".to_string());
+    let service_type = spec
+        .type_
+        .clone()
+        .unwrap_or_else(|| "ClusterIP".to_string());
     let cluster_ip = spec.cluster_ip.clone().unwrap_or_default();
     Some((name, namespace, service_type, cluster_ip))
 }

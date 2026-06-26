@@ -13,7 +13,10 @@ pub struct PodHandler {
 
 impl PodHandler {
     pub fn new(aggregator: Arc<ClusterAggregator>, registry: Arc<ServiceRegistry>) -> Self {
-        Self { aggregator, registry }
+        Self {
+            aggregator,
+            registry,
+        }
     }
 }
 
@@ -21,17 +24,21 @@ impl EventHandler<Pod> for PodHandler {
     fn on_apply(&self, pod: &Pod) {
         if let Some((ip, namespace)) = pod_ip_and_namespace(pod) {
             // Try to find which service this pod belongs to via label matching
-            let (service_name, service_type) = self
-                .registry
-                .find_service_for_pod(pod)
-                .unwrap_or_default();
+            let (service_name, service_type) =
+                self.registry.find_service_for_pod(pod).unwrap_or_default();
 
             let application_name = resolve_application_name(pod, &service_name);
 
             let aggregator = self.aggregator.clone();
             tokio::spawn(async move {
                 if let Err(e) = aggregator
-                    .send_pod_applied(ip.clone(), namespace, application_name, service_name, service_type)
+                    .send_pod_applied(
+                        ip.clone(),
+                        namespace,
+                        application_name,
+                        service_name,
+                        service_type,
+                    )
                     .await
                 {
                     log::error!("Failed to send pod applied (ip={}): {}", ip, e);
@@ -85,8 +92,7 @@ fn resolve_application_name(pod: &Pod, service_name: &str) -> String {
         return name.clone();
     }
     if let Some(name) = labels.and_then(|l| l.get("app")) {
-          return name.clone();
+        return name.clone();
     }
     pod.metadata.name.clone().unwrap_or_default()
-    
 }

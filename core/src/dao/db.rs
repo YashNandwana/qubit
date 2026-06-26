@@ -1,12 +1,12 @@
-use clickhouse::insert::Insert;
 use clickhouse::Client;
 use clickhouse::Row;
+use clickhouse::insert::Insert;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::config::QubitConfig;
-use crate::model::{EbpfNetworkEvent, K8sResourceEvent, Error};
+use crate::model::{EbpfNetworkEvent, Error, K8sResourceEvent};
 
 pub struct DAO {
     config: Arc<QubitConfig>,
@@ -104,8 +104,14 @@ impl DAO {
             .await
             .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
 
-        insert.write(&event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
-        insert.end().await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        insert
+            .write(&event)
+            .await
+            .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        insert
+            .end()
+            .await
+            .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         Ok(())
     }
 
@@ -160,9 +166,15 @@ impl DAO {
             .await
             .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         for event in new_events {
-            insert.write(event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+            insert
+                .write(event)
+                .await
+                .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         }
-        insert.end().await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        insert
+            .end()
+            .await
+            .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         Ok(())
     }
 
@@ -173,8 +185,14 @@ impl DAO {
             .await
             .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
 
-        insert.write(&event).await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
-        insert.end().await.map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        insert
+            .write(&event)
+            .await
+            .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
+        insert
+            .end()
+            .await
+            .map_err(|e| Error::EventAdditionFailed(e.to_string()))?;
         Ok(())
     }
 
@@ -244,7 +262,10 @@ impl DAO {
         Ok((items, total))
     }
 
-    pub async fn fetch_events_by_service(&self, service_name: String) -> Result<Vec<EbpfNetworkEvent>, Error> {
+    pub async fn fetch_events_by_service(
+        &self,
+        service_name: String,
+    ) -> Result<Vec<EbpfNetworkEvent>, Error> {
         let query_str = format!(
             "SELECT * FROM {} WHERE src_service = '{}'",
             self.config.db.table.ebpf_network_events, service_name

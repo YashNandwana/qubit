@@ -6,40 +6,40 @@ use std::fmt;
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct NodeId {
     pub application_name: String,
-    pub namespace:        String,
+    pub namespace: String,
 }
 
 /// One observed HTTP call. Deduplicated by (src, dst, path, method) before
 /// being added to the graph.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Flow {
-    pub source_node:      NodeId,
+    pub source_node: NodeId,
     pub destination_node: NodeId,
-    pub path:             String,
-    pub method:           String,
+    pub path: String,
+    pub method: String,
 }
 
 pub struct Topology {
-    pub nodes:      HashMap<NodeId, NodeData>,
+    pub nodes: HashMap<NodeId, NodeData>,
     /// Indexed by destination — "who calls this service?"
-    pub upstream:   HashMap<NodeId, Vec<Flow>>,
+    pub upstream: HashMap<NodeId, Vec<Flow>>,
     /// Indexed by source — "what does this service call?"
     pub downstream: HashMap<NodeId, Vec<Flow>>,
 }
 
 #[derive(Default)]
 pub struct NodeData {
-    pub ip:         String,
+    pub ip: String,
     /// K8s resource events (Deployment, Ingress, HPA, etc.) attached to this node.
     pub k8s_events: Vec<K8sEvent>,
 }
 
 pub struct K8sEvent {
-    pub timestamp:     u64,
+    pub timestamp: u64,
     pub resource_name: String,
     pub resource_type: String,
-    pub event_type:    String,
-    pub event_data:    String,
+    pub event_type: String,
+    pub event_data: String,
 }
 
 impl fmt::Display for NodeId {
@@ -50,14 +50,23 @@ impl fmt::Display for NodeId {
 
 impl fmt::Display for Flow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} → {}  {} {}", self.source_node, self.destination_node, self.method, self.path)
+        write!(
+            f,
+            "{} → {}  {} {}",
+            self.source_node, self.destination_node, self.method, self.path
+        )
     }
 }
 
 impl fmt::Display for Topology {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let edge_count: usize = self.downstream.values().map(|v| v.len()).sum();
-        writeln!(f, "Topology: {} nodes, {} edges", self.nodes.len(), edge_count)?;
+        writeln!(
+            f,
+            "Topology: {} nodes, {} edges",
+            self.nodes.len(),
+            edge_count
+        )?;
         // Sort by source node key for deterministic output.
         let mut sources: Vec<&NodeId> = self.downstream.keys().collect();
         sources.sort_by_key(|n| format!("{}", n));
@@ -73,8 +82,8 @@ impl fmt::Display for Topology {
 impl Topology {
     pub fn new() -> Self {
         Self {
-            nodes:      HashMap::new(),
-            upstream:   HashMap::new(),
+            nodes: HashMap::new(),
+            upstream: HashMap::new(),
             downstream: HashMap::new(),
         }
     }
@@ -87,7 +96,10 @@ impl Topology {
     }
 
     pub fn add_flow(&mut self, flow: Flow) {
-        let upstream_flows = self.upstream.entry(flow.destination_node.clone()).or_default();
+        let upstream_flows = self
+            .upstream
+            .entry(flow.destination_node.clone())
+            .or_default();
         if !upstream_flows.contains(&flow) {
             upstream_flows.push(flow.clone());
         }
@@ -138,12 +150,18 @@ impl Topology {
         // 2. Re-key upstream map (keyed by destination).
         //    If the stale node was a destination, move its entry.
         if let Some(flows) = self.upstream.remove(&stale_id) {
-            self.upstream.entry(resolved_id.clone()).or_default().extend(flows);
+            self.upstream
+                .entry(resolved_id.clone())
+                .or_default()
+                .extend(flows);
         }
 
         // 3. Re-key downstream map (keyed by source).
         if let Some(flows) = self.downstream.remove(&stale_id) {
-            self.downstream.entry(resolved_id.clone()).or_default().extend(flows);
+            self.downstream
+                .entry(resolved_id.clone())
+                .or_default()
+                .extend(flows);
         }
 
         // 4. Update flow references everywhere — the stale NodeId might appear
@@ -254,7 +272,8 @@ impl Topology {
                 continue;
             }
 
-            let in_flows: Vec<Flow> = self.upstream
+            let in_flows: Vec<Flow> = self
+                .upstream
                 .get(node)
                 .map(|flows| {
                     flows
@@ -268,7 +287,8 @@ impl Topology {
                 vis_upstream.insert(node.clone(), in_flows);
             }
 
-            let out_flows: Vec<Flow> = self.downstream
+            let out_flows: Vec<Flow> = self
+                .downstream
                 .get(node)
                 .map(|flows| {
                     flows
@@ -283,7 +303,11 @@ impl Topology {
             }
         }
 
-        SubgraphResult { nodes: all_nodes, upstream: vis_upstream, downstream: vis_downstream }
+        SubgraphResult {
+            nodes: all_nodes,
+            upstream: vis_upstream,
+            downstream: vis_downstream,
+        }
     }
 }
 
@@ -292,7 +316,10 @@ mod tests {
     use super::*;
 
     fn node(svc: &str, ns: &str) -> NodeId {
-        NodeId { application_name: svc.to_string(), namespace: ns.to_string() }
+        NodeId {
+            application_name: svc.to_string(),
+            namespace: ns.to_string(),
+        }
     }
 
     fn flow(src_svc: &str, src_ns: &str, dst_svc: &str, dst_ns: &str) -> Flow {
@@ -311,8 +338,20 @@ mod tests {
         let mut topo = Topology::new();
         let id = node("svc-a", "default");
 
-        topo.add_node(id.clone(), NodeData { ip: "10.0.0.1".to_string(), ..Default::default() });
-        topo.add_node(id.clone(), NodeData { ip: "10.0.0.2".to_string(), ..Default::default() }); // should be ignored
+        topo.add_node(
+            id.clone(),
+            NodeData {
+                ip: "10.0.0.1".to_string(),
+                ..Default::default()
+            },
+        );
+        topo.add_node(
+            id.clone(),
+            NodeData {
+                ip: "10.0.0.2".to_string(),
+                ..Default::default()
+            },
+        ); // should be ignored
 
         assert_eq!(topo.nodes.len(), 1);
         assert_eq!(topo.nodes[&id].ip, "10.0.0.1"); // first value preserved
@@ -356,8 +395,20 @@ mod tests {
         let mut topo = Topology::new();
 
         // svc-a calls an IP we haven't resolved yet
-        topo.add_node(node("svc-a", "default"), NodeData { ip: "10.0.0.1".to_string(), ..Default::default() });
-        topo.add_node(node("10.0.0.2", "unknown"), NodeData { ip: "10.0.0.2".to_string(), ..Default::default() });
+        topo.add_node(
+            node("svc-a", "default"),
+            NodeData {
+                ip: "10.0.0.1".to_string(),
+                ..Default::default()
+            },
+        );
+        topo.add_node(
+            node("10.0.0.2", "unknown"),
+            NodeData {
+                ip: "10.0.0.2".to_string(),
+                ..Default::default()
+            },
+        );
         topo.add_flow(flow("svc-a", "default", "10.0.0.2", "unknown"));
 
         // Pod cache mapping arrives: 10.0.0.2 = svc-b in default
@@ -384,9 +435,21 @@ mod tests {
         let mut topo = Topology::new();
 
         // Correct node already exists with real IP
-        topo.add_node(node("svc-b", "default"), NodeData { ip: "10.0.0.2".to_string(), ..Default::default() });
+        topo.add_node(
+            node("svc-b", "default"),
+            NodeData {
+                ip: "10.0.0.2".to_string(),
+                ..Default::default()
+            },
+        );
         // Stale node also exists (from an earlier unresolved event)
-        topo.add_node(node("10.0.0.2", "unknown"), NodeData { ip: "10.0.0.2".to_string(), ..Default::default() });
+        topo.add_node(
+            node("10.0.0.2", "unknown"),
+            NodeData {
+                ip: "10.0.0.2".to_string(),
+                ..Default::default()
+            },
+        );
         topo.add_flow(flow("svc-a", "default", "10.0.0.2", "unknown"));
 
         topo.resolve_unknown_node("10.0.0.2", "svc-b", "default");
@@ -437,7 +500,11 @@ mod tests {
         let sg = topo.get_subgraph("svc-a", "ns", 2);
 
         for svc in &["svc-a", "svc-b", "svc-c", "svc-d", "svc-e", "caller"] {
-            assert!(sg.nodes.contains(&node(svc, "ns")), "{} not in subgraph", svc);
+            assert!(
+                sg.nodes.contains(&node(svc, "ns")),
+                "{} not in subgraph",
+                svc
+            );
         }
     }
 
@@ -455,7 +522,11 @@ mod tests {
         // (it's not a BFS tree edge — svc-b was discovered from svc-a, not svc-d)
         let svc_d_out = sg.downstream.get(&node("svc-d", "ns"));
         assert!(
-            svc_d_out.is_none() || svc_d_out.unwrap().iter().all(|f| f.destination_node != node("svc-b", "ns")),
+            svc_d_out.is_none()
+                || svc_d_out
+                    .unwrap()
+                    .iter()
+                    .all(|f| f.destination_node != node("svc-b", "ns")),
             "cross-edge svc-d→svc-b should be filtered"
         );
     }

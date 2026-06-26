@@ -11,6 +11,5 @@ pub use query::QueryServer;
 pub mod qubit {
     tonic::include_proto!("qubit");
 
-    pub const FILE_DESCRIPTOR_SET: &[u8] =
-        tonic::include_file_descriptor_set!("qubit_descriptor");
+    pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("qubit_descriptor");
 }

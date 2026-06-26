@@ -3,7 +3,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Node;
-use kube::{Api, Client, runtime::watcher::{self, Event}};
+use kube::{
+    runtime::watcher::{self, Event},
+    Api, Client,
+};
 
 use super::generic_handler::GenericHandler;
 use super::informer::{EventHandler, Informer};
@@ -38,8 +41,7 @@ impl Informer for NodeInformer {
 
         log::info!("Starting Node informer (cluster-scoped)");
 
-        let mut watcher =
-            watcher::watcher(api, watcher::Config::default()).boxed();
+        let mut watcher = watcher::watcher(api, watcher::Config::default()).boxed();
 
         // Cast to NodeHandler so the compiler knows which EventHandler<K> impl to use.
         // GenericHandler has a blanket impl for all K, so without this the compiler

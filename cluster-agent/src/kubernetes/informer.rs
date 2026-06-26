@@ -5,8 +5,8 @@ use futures::StreamExt;
 use kube::api::Resource;
 use kube::core::NamespaceResourceScope;
 use kube::{
-    Api, Client,
     runtime::watcher::{self, Event},
+    Api, Client,
 };
 use serde::de::DeserializeOwned;
 
@@ -70,7 +70,11 @@ where
         + 'static,
     H: EventHandler<K> + 'static,
 {
-    pub fn new(config: Arc<ClusterAgentConfig>, informer_type: InformerType, handler: H) -> Arc<Self> {
+    pub fn new(
+        config: Arc<ClusterAgentConfig>,
+        informer_type: InformerType,
+        handler: H,
+    ) -> Arc<Self> {
         Arc::new(Self {
             config,
             watcher_cfg: watcher::Config::default(),
@@ -106,7 +110,11 @@ where
         log::info!(
             "Starting {} informer for namespace: {}",
             type_name,
-            if namespace.is_empty() { "all" } else { namespace }
+            if namespace.is_empty() {
+                "all"
+            } else {
+                namespace
+            }
         );
 
         let mut watcher = watcher::watcher(api, self.watcher_cfg.clone()).boxed();

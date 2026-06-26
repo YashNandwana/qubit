@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;
 
-use anyhow::{Error};
+use anyhow::Error;
 use k8s_openapi::api::core::v1::{Pod, Service};
 
 struct RegisteredService {
@@ -40,21 +40,32 @@ impl ServiceRegistry {
             // Services without selectors (e.g. ExternalName) don't manage pods
             return Ok("No selector found on service".to_string());
         }
-        let service_type = spec.type_.clone().unwrap_or_else(|| "ClusterIP".to_string());
+        let service_type = spec
+            .type_
+            .clone()
+            .unwrap_or_else(|| "ClusterIP".to_string());
         let key = format!("{}/{}", namespace, name);
-        self.services.write()
+        self.services
+            .write()
             .map_err(|_| anyhow::anyhow!("lock poisoned"))?
             .insert(
-            key,
-            RegisteredService { name, service_type, selector },
-        );
-        
+                key,
+                RegisteredService {
+                    name,
+                    service_type,
+                    selector,
+                },
+            );
+
         Ok("regisetered services".to_string())
     }
 
     pub fn deregister(&self, name: &str, namespace: &str) -> Result<String, Error> {
         let key = format!("{}/{}", namespace, name);
-        self.services.write().map_err(|_| anyhow::anyhow!("lock poisoned"))?.remove(&key);
+        self.services
+            .write()
+            .map_err(|_| anyhow::anyhow!("lock poisoned"))?
+            .remove(&key);
         Ok("deregisterd service".to_string())
     }
 
@@ -98,7 +109,10 @@ mod tests {
             },
             spec: Some(ServiceSpec {
                 selector: Some(
-                    selector.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                    selector
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
                 ),
                 type_: Some("ClusterIP".to_string()),
                 ..Default::default()
@@ -111,7 +125,10 @@ mod tests {
         Pod {
             metadata: ObjectMeta {
                 labels: Some(
-                    labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                    labels
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
                 ),
                 ..Default::default()
             },

@@ -37,7 +37,10 @@ impl EventHandler<ConfigMap> for ConfigMapHandler {
         }
 
         tokio::spawn(async move {
-            if let Err(e) = aggregator.send_configmap_applied(name.clone(), namespace).await {
+            if let Err(e) = aggregator
+                .send_configmap_applied(name.clone(), namespace)
+                .await
+            {
                 log::error!("Failed to send configmap applied (name={}): {}", name, e);
             }
         });
@@ -48,7 +51,10 @@ impl EventHandler<ConfigMap> for ConfigMapHandler {
         let namespace = cm.metadata.namespace.clone().unwrap_or_default();
         let aggregator = self.aggregator.clone();
         tokio::spawn(async move {
-            if let Err(e) = aggregator.send_configmap_deleted(name.clone(), namespace).await {
+            if let Err(e) = aggregator
+                .send_configmap_deleted(name.clone(), namespace)
+                .await
+            {
                 log::error!("Failed to send configmap deleted (name={}): {}", name, e);
             }
         });

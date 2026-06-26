@@ -192,18 +192,18 @@ impl EbpfAggregator {
                         .values()
                         .flatten()
                         .map(|flow| EbpfNetworkEvent {
-                            timestamp_ns:    now_ns,
-                            src_service:     flow.source_node.application_name.clone(),
-                            src_namespace:   flow.source_node.namespace.clone(),
+                            timestamp_ns: now_ns,
+                            src_service: flow.source_node.application_name.clone(),
+                            src_namespace: flow.source_node.namespace.clone(),
                             src_application: flow.source_node.application_name.clone(),
-                            dst_service:     flow.destination_node.application_name.clone(),
-                            dst_namespace:   flow.destination_node.namespace.clone(),
+                            dst_service: flow.destination_node.application_name.clone(),
+                            dst_namespace: flow.destination_node.namespace.clone(),
                             dst_application: flow.destination_node.application_name.clone(),
                             src_port: 0,
                             dst_port: 0,
                             method: flow.method.clone(),
-                            path:   flow.path.clone(),
-                            host:   flow.destination_node.application_name.clone(),
+                            path: flow.path.clone(),
+                            host: flow.destination_node.application_name.clone(),
                         })
                         .collect()
                 };
@@ -318,4 +318,3 @@ mod tests {
         assert_eq!(ns, "external");
     }
 }
-    

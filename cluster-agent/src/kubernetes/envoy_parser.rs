@@ -34,14 +34,18 @@ pub fn parse_envoy_routes(yaml_str: &str) -> Vec<EnvoyRoute> {
                 Some(n) if !n.is_empty() => n,
                 _ => continue,
             };
-            let addr = cluster["load_assignment"]["endpoints"][0]["lb_endpoints"][0]
-                ["endpoint"]["address"]["socket_address"]["address"]
+            let addr = cluster["load_assignment"]["endpoints"][0]["lb_endpoints"][0]["endpoint"]
+                ["address"]["socket_address"]["address"]
                 .as_str()
                 .unwrap_or("");
 
             if let Some((svc, ns)) = svc_namespace_from_fqdn(addr) {
                 // Insert the FQDN itself so lookups by full hostname resolve.
-                routes.push(EnvoyRoute { domain: addr.to_string(), service_name: svc.clone(), namespace: ns.clone() });
+                routes.push(EnvoyRoute {
+                    domain: addr.to_string(),
+                    service_name: svc.clone(),
+                    namespace: ns.clone(),
+                });
                 cluster_map.insert(name.to_string(), (svc, ns));
             }
         }
@@ -70,7 +74,7 @@ pub fn parse_envoy_routes(yaml_str: &str) -> Vec<EnvoyRoute> {
                 } else if filter["route_config"].is_mapping() {
                     &filter["route_config"]
                 } else {
-                    continue
+                    continue;
                 };
 
                 let vhosts = match route_cfg["virtual_hosts"].as_sequence() {
@@ -120,5 +124,8 @@ fn svc_namespace_from_fqdn(host: &str) -> Option<(String, String)> {
     if svc_pos < 2 {
         return None;
     }
-    Some((parts[svc_pos - 2].to_string(), parts[svc_pos - 1].to_string()))
+    Some((
+        parts[svc_pos - 2].to_string(),
+        parts[svc_pos - 1].to_string(),
+    ))
 }

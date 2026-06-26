@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::dao::DAO;
 use crate::model::K8sResourceEvent;
-use crate::topology::{Topology, K8sEvent, NodeId};
+use crate::topology::{K8sEvent, NodeId, Topology};
 
 /// Cached metadata for a running pod, keyed by pod IP.
 #[derive(Clone)]
@@ -45,25 +45,38 @@ impl K8sAggregator {
         self.pod_cache.clone()
     }
 
-    pub fn record_pod_applied(&self, pod_ip: &str,
+    pub fn record_pod_applied(
+        &self,
+        pod_ip: &str,
         namespace: &str,
         application_name: &str,
         service_name: &str,
-        service_type: &str) {
-        self.pod_cache.insert(pod_ip.to_string(), PodInfo {
-            namespace: namespace.to_string(),
-            application_name: application_name.to_string(),
-            service_name: service_name.to_string(),
-            service_type: service_type.to_string(),
-        });
+        service_type: &str,
+    ) {
+        self.pod_cache.insert(
+            pod_ip.to_string(),
+            PodInfo {
+                namespace: namespace.to_string(),
+                application_name: application_name.to_string(),
+                service_name: service_name.to_string(),
+                service_type: service_type.to_string(),
+            },
+        );
         // If we now know the real service name, fix any stale topology nodes
         // that were created with the raw IP before this mapping existed.
         if !application_name.is_empty() {
             if let Ok(mut topo) = self.topology.write() {
-                log::info!("resolving stale topology entries from pod cache {} {}", pod_ip, application_name);
+                log::info!(
+                    "resolving stale topology entries from pod cache {} {}",
+                    pod_ip,
+                    application_name
+                );
                 topo.resolve_unknown_node(pod_ip, application_name, namespace);
             } else {
-                log::warn!("Failed to acquire topology write lock — skipping resolve for {}", pod_ip);
+                log::warn!(
+                    "Failed to acquire topology write lock — skipping resolve for {}",
+                    pod_ip
+                );
             }
         }
 
@@ -74,13 +87,22 @@ impl K8sAggregator {
         self.pod_cache.remove(pod_ip);
     }
 
-    pub fn record_service_applied(&self, name: &str, namespace: &str, service_type: &str, cluster_ip: &str) {
+    pub fn record_service_applied(
+        &self,
+        name: &str,
+        namespace: &str,
+        service_type: &str,
+        cluster_ip: &str,
+    ) {
         let key = format!("{}/{}", namespace, name);
-        self.service_cache.insert(key, ServiceInfo {
-            namespace: namespace.to_string(),
-            service_type: service_type.to_string(),
-            cluster_ip: cluster_ip.to_string(),
-        });
+        self.service_cache.insert(
+            key,
+            ServiceInfo {
+                namespace: namespace.to_string(),
+                service_type: service_type.to_string(),
+                cluster_ip: cluster_ip.to_string(),
+            },
+        );
     }
 
     pub fn record_service_deleted(&self, name: &str, namespace: &str) {
@@ -147,7 +169,10 @@ impl K8sAggregator {
             };
             topo.add_k8s_event(node_id, topo_event);
         } else {
-            log::warn!("Failed to acquire topology write lock for {} event", resource_type);
+            log::warn!(
+                "Failed to acquire topology write lock for {} event",
+                resource_type
+            );
         }
     }
 }

@@ -143,7 +143,8 @@ mod tests {
 
     #[test]
     fn parse_host_present() {
-        let event = make_event(b"GET / HTTP/1.1\r\nHost: service-b.default\r\nContent-Length: 0\r\n\r\n");
+        let event =
+            make_event(b"GET / HTTP/1.1\r\nHost: service-b.default\r\nContent-Length: 0\r\n\r\n");
         assert_eq!(event.parse_host(), Some("service-b.default".to_string()));
     }
 

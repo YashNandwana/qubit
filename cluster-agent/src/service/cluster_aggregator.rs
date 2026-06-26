@@ -39,26 +39,32 @@ impl ClusterAggregator {
         service_name: String,
         service_type: String,
     ) -> Result<(), tonic::Status> {
-        self.client.clone().send_pod_event(PodEventRequest {
-            pod_ip,
-            namespace,
-            application_name,
-            service_name,
-            service_type,
-            event_type: K8sEventType::Applied as i32,
-        }).await?;
+        self.client
+            .clone()
+            .send_pod_event(PodEventRequest {
+                pod_ip,
+                namespace,
+                application_name,
+                service_name,
+                service_type,
+                event_type: K8sEventType::Applied as i32,
+            })
+            .await?;
         Ok(())
     }
 
     pub async fn send_pod_deleted(&self, pod_ip: String) -> Result<(), tonic::Status> {
-        self.client.clone().send_pod_event(PodEventRequest {
-            pod_ip,
-            namespace: String::new(),
-            application_name: String::new(),
-            service_name: String::new(),
-            service_type: String::new(),
-            event_type: K8sEventType::Deleted as i32,
-        }).await?;
+        self.client
+            .clone()
+            .send_pod_event(PodEventRequest {
+                pod_ip,
+                namespace: String::new(),
+                application_name: String::new(),
+                service_name: String::new(),
+                service_type: String::new(),
+                event_type: K8sEventType::Deleted as i32,
+            })
+            .await?;
         Ok(())
     }
 
@@ -69,42 +75,66 @@ impl ClusterAggregator {
         service_type: String,
         cluster_ip: String,
     ) -> Result<(), tonic::Status> {
-        self.client.clone().send_service_event(ServiceEventRequest {
-            name,
-            namespace,
-            service_type,
-            cluster_ip,
-            event_type: K8sEventType::Applied as i32,
-        }).await?;
+        self.client
+            .clone()
+            .send_service_event(ServiceEventRequest {
+                name,
+                namespace,
+                service_type,
+                cluster_ip,
+                event_type: K8sEventType::Applied as i32,
+            })
+            .await?;
         Ok(())
     }
 
-    pub async fn send_service_deleted(&self, name: String, namespace: String) -> Result<(), tonic::Status> {
-        self.client.clone().send_service_event(ServiceEventRequest {
-            name,
-            namespace,
-            service_type: String::new(),
-            cluster_ip: String::new(),
-            event_type: K8sEventType::Deleted as i32,
-        }).await?;
+    pub async fn send_service_deleted(
+        &self,
+        name: String,
+        namespace: String,
+    ) -> Result<(), tonic::Status> {
+        self.client
+            .clone()
+            .send_service_event(ServiceEventRequest {
+                name,
+                namespace,
+                service_type: String::new(),
+                cluster_ip: String::new(),
+                event_type: K8sEventType::Deleted as i32,
+            })
+            .await?;
         Ok(())
     }
 
-    pub async fn send_configmap_applied(&self, name: String, namespace: String) -> Result<(), tonic::Status> {
-        self.client.clone().send_config_map_event(ConfigMapEventRequest {
-            name,
-            namespace,
-            event_type: K8sEventType::Applied as i32,
-        }).await?;
+    pub async fn send_configmap_applied(
+        &self,
+        name: String,
+        namespace: String,
+    ) -> Result<(), tonic::Status> {
+        self.client
+            .clone()
+            .send_config_map_event(ConfigMapEventRequest {
+                name,
+                namespace,
+                event_type: K8sEventType::Applied as i32,
+            })
+            .await?;
         Ok(())
     }
 
-    pub async fn send_configmap_deleted(&self, name: String, namespace: String) -> Result<(), tonic::Status> {
-        self.client.clone().send_config_map_event(ConfigMapEventRequest {
-            name,
-            namespace,
-            event_type: K8sEventType::Deleted as i32,
-        }).await?;
+    pub async fn send_configmap_deleted(
+        &self,
+        name: String,
+        namespace: String,
+    ) -> Result<(), tonic::Status> {
+        self.client
+            .clone()
+            .send_config_map_event(ConfigMapEventRequest {
+                name,
+                namespace,
+                event_type: K8sEventType::Deleted as i32,
+            })
+            .await?;
         Ok(())
     }
 
@@ -135,18 +165,23 @@ impl ClusterAggregator {
         &self,
         entries: Vec<(String, String, String, Vec<String>)>,
     ) -> Result<(), tonic::Status> {
-        self.client.clone().send_service_pod_map(ServicePodMapRequest {
-            entries: entries
-                .into_iter()
-                .map(|(service_name, namespace, service_type, pod_ips)| ServicePodEntry {
-                    application_name: service_name.clone(),
-                    service_name,
-                    namespace,
-                    service_type,
-                    pod_ips,
-                })
-                .collect(),
-        }).await?;
+        self.client
+            .clone()
+            .send_service_pod_map(ServicePodMapRequest {
+                entries: entries
+                    .into_iter()
+                    .map(
+                        |(service_name, namespace, service_type, pod_ips)| ServicePodEntry {
+                            application_name: service_name.clone(),
+                            service_name,
+                            namespace,
+                            service_type,
+                            pod_ips,
+                        },
+                    )
+                    .collect(),
+            })
+            .await?;
         Ok(())
     }
 
@@ -159,7 +194,10 @@ impl ClusterAggregator {
                 namespace: r.namespace,
             })
             .collect();
-        self.client.clone().send_envoy_routes(EnvoyRoutesRequest { entries }).await?;
+        self.client
+            .clone()
+            .send_envoy_routes(EnvoyRoutesRequest { entries })
+            .await?;
         Ok(())
     }
 }

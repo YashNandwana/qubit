@@ -100,6 +100,11 @@ fn extract_metadata<K: Resource>(obj: &K) -> (String, String, HashMap<String, St
     let meta = obj.meta();
     let name = meta.name.clone().unwrap_or_default();
     let namespace = meta.namespace.clone().unwrap_or_default();
-    let labels = meta.labels.clone().unwrap_or_default().into_iter().collect();
+    let labels = meta
+        .labels
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     (name, namespace, labels)
 }

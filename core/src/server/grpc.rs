@@ -5,24 +5,20 @@ use tonic::{Request, Response, Status};
 use crate::aggregator::{EbpfAggregator, K8sAggregator};
 use crate::config::QubitConfig;
 use crate::dao::DAO;
-use crate::envoy::{EnvoyDomainCache};
-use crate::model::{EbpfNetworkEventInput};
+use crate::envoy::EnvoyDomainCache;
+use crate::model::EbpfNetworkEventInput;
 use crate::topology::Topology;
 
-use super::query::QueryServer;
 use super::qubit::event_ingestion_server::{EventIngestion, EventIngestionServer};
 use super::qubit::qubit_query_server::QubitQueryServer;
 use super::qubit::{
-    ConfigMapEventRequest, ConfigMapEventResponse,
-    EbpfNetworkEventRequest, EbpfNetworkEventResponse,
-    EnvoyRoutesRequest, EnvoyRoutesResponse,
-    K8sEventType,
-    K8sResourceEventRequest, K8sResourceEventResponse,
-    PodEventRequest, PodEventResponse,
-    ServiceEventRequest, ServiceEventResponse,
-    ServicePodMapRequest, ServicePodMapResponse,
-    FILE_DESCRIPTOR_SET,
+    ConfigMapEventRequest, ConfigMapEventResponse, EbpfNetworkEventRequest,
+    EbpfNetworkEventResponse, EnvoyRoutesRequest, EnvoyRoutesResponse, FILE_DESCRIPTOR_SET,
+    K8sEventType, K8sResourceEventRequest, K8sResourceEventResponse, PodEventRequest,
+    PodEventResponse, ServiceEventRequest, ServiceEventResponse, ServicePodMapRequest,
+    ServicePodMapResponse,
 };
+use super::query::QueryServer;
 
 /// Implements the `EventIngestion` gRPC service. Owns both aggregators and
 /// is created once per server lifecycle inside `do_serve`.
@@ -34,15 +30,32 @@ pub struct GrpcServer {
 }
 
 impl GrpcServer {
-    pub fn new(config: Arc<QubitConfig>, db: Arc<DAO>, topology: Arc<RwLock<Topology>>, cache: Arc<EnvoyDomainCache>) -> Self {
+    pub fn new(
+        config: Arc<QubitConfig>,
+        db: Arc<DAO>,
+        topology: Arc<RwLock<Topology>>,
+        cache: Arc<EnvoyDomainCache>,
+    ) -> Self {
         let k8s_aggregator = Arc::new(K8sAggregator::new(topology.clone(), db.clone()));
         let pod_cache = k8s_aggregator.pod_cache();
-        let ebpf_aggregator = Arc::new(EbpfAggregator::new(config.clone(), db, topology, pod_cache, Arc::clone(&cache)));
-        Self { config, ebpf_aggregator, k8s_aggregator, envoy_cache: cache }
+        let ebpf_aggregator = Arc::new(EbpfAggregator::new(
+            config.clone(),
+            db,
+            topology,
+            pod_cache,
+            Arc::clone(&cache),
+        ));
+        Self {
+            config,
+            ebpf_aggregator,
+            k8s_aggregator,
+            envoy_cache: cache,
+        }
     }
 
     pub async fn do_serve(self, query_server: QueryServer) -> Result<(), String> {
-        self.ebpf_aggregator.start_flush_timer(self.config.app.ebpf_flush_interval_secs);
+        self.ebpf_aggregator
+            .start_flush_timer(self.config.app.ebpf_flush_interval_secs);
 
         let addr = format!("0.0.0.0:{}", self.config.app.grpc_port)
             .parse()
@@ -105,7 +118,9 @@ impl EventIngestion for GrpcServer {
             Ok(K8sEventType::Applied) => {
                 log::info!(
                     "Pod applied: {} -> {} (service: {})",
-                    req.pod_ip, req.namespace, req.service_name
+                    req.pod_ip,
+                    req.namespace,
+                    req.service_name
                 );
                 self.k8s_aggregator.record_pod_applied(
                     &req.pod_ip,
@@ -121,7 +136,10 @@ impl EventIngestion for GrpcServer {
             }
             Err(_) => return Err(Status::invalid_argument("unknown event type")),
         }
-        Ok(Response::new(PodEventResponse { success: true, message: "ok".to_string() }))
+        Ok(Response::new(PodEventResponse {
+            success: true,
+            message: "ok".to_string(),
+        }))
     }
 
     async fn send_service_event(
@@ -131,16 +149,31 @@ impl EventIngestion for GrpcServer {
         let req = request.into_inner();
         match K8sEventType::try_from(req.event_type) {
             Ok(K8sEventType::Applied) => {
-                log::info!("Service applied: {}/{} ({}, {})", req.namespace, req.name, req.service_type, req.cluster_ip);
-                self.k8s_aggregator.record_service_applied(&req.name, &req.namespace, &req.service_type, &req.cluster_ip);
+                log::info!(
+                    "Service applied: {}/{} ({}, {})",
+                    req.namespace,
+                    req.name,
+                    req.service_type,
+                    req.cluster_ip
+                );
+                self.k8s_aggregator.record_service_applied(
+                    &req.name,
+                    &req.namespace,
+                    &req.service_type,
+                    &req.cluster_ip,
+                );
             }
             Ok(K8sEventType::Deleted) => {
                 log::info!("Service deleted: {}/{}", req.namespace, req.name);
-                self.k8s_aggregator.record_service_deleted(&req.name, &req.namespace);
+                self.k8s_aggregator
+                    .record_service_deleted(&req.name, &req.namespace);
             }
             Err(_) => return Err(Status::invalid_argument("unknown event type")),
         }
-        Ok(Response::new(ServiceEventResponse { success: true, message: "ok".to_string() }))
+        Ok(Response::new(ServiceEventResponse {
+            success: true,
+            message: "ok".to_string(),
+        }))
     }
 
     async fn send_config_map_event(
@@ -151,11 +184,18 @@ impl EventIngestion for GrpcServer {
         // happens in the cluster-agent and arrives via send_envoy_routes.
         let req = request.into_inner();
         match K8sEventType::try_from(req.event_type) {
-            Ok(K8sEventType::Applied) => log::info!("ConfigMap applied: {}/{}", req.namespace, req.name),
-            Ok(K8sEventType::Deleted) => log::info!("ConfigMap deleted: {}/{}", req.namespace, req.name),
+            Ok(K8sEventType::Applied) => {
+                log::info!("ConfigMap applied: {}/{}", req.namespace, req.name)
+            }
+            Ok(K8sEventType::Deleted) => {
+                log::info!("ConfigMap deleted: {}/{}", req.namespace, req.name)
+            }
             Err(_) => return Err(Status::invalid_argument("unknown event type")),
         }
-        Ok(Response::new(ConfigMapEventResponse { success: true, message: "ok".to_string() }))
+        Ok(Response::new(ConfigMapEventResponse {
+            success: true,
+            message: "ok".to_string(),
+        }))
     }
 
     async fn send_service_pod_map(
@@ -223,7 +263,8 @@ impl EventIngestion for GrpcServer {
         let entries = request.into_inner().entries;
         let count = entries.len();
         for entry in entries {
-            self.envoy_cache.insert(entry.domain, entry.service_name, entry.namespace);
+            self.envoy_cache
+                .insert(entry.domain, entry.service_name, entry.namespace);
         }
         log::info!("Envoy routes applied: {} entries", count);
         Ok(Response::new(EnvoyRoutesResponse {

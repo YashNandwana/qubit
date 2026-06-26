@@ -6,8 +6,8 @@ pub mod qubit {
     tonic::include_proto!("qubit");
 }
 
-use qubit::event_ingestion_client::EventIngestionClient;
 use qubit::EbpfNetworkEventRequest;
+use qubit::event_ingestion_client::EventIngestionClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
