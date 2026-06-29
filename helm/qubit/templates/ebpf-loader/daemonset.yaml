@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "qubit.ebpfLoader.fullname" . }}
+  labels:
+    app: {{ include "qubit.ebpfLoader.fullname" . }}
+    {{- include "qubit.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "qubit.ebpfLoader.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "qubit.ebpfLoader.fullname" . }}
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: ebpf-loader
+          image: "{{ .Values.ebpfLoader.image.repository }}:{{ .Values.ebpfLoader.image.tag }}"
+          imagePullPolicy: {{ .Values.ebpfLoader.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: INTERFACE
+              value: {{ .Values.ebpfLoader.config.interface | quote }}
+            - name: CONFIG_PATH
+              value: /app/config.yaml
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+            - name: sys
+              mountPath: /sys
+            - name: debugfs
+              mountPath: /sys/kernel/debug
+          resources:
+            {{- toYaml .Values.ebpfLoader.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "qubit.ebpfLoader.fullname" . }}-config
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug

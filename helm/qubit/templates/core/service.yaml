@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qubit.core.fullname" . }}
+  labels:
+    app: {{ include "qubit.core.fullname" . }}
+    {{- include "qubit.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: {{ include "qubit.core.fullname" . }}
+  ports:
+    - name: grpc
+      port: {{ .Values.core.grpcPort }}
+      targetPort: grpc
+    - name: http
+      port: {{ .Values.core.httpPort }}
+      targetPort: http

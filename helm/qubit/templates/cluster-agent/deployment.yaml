@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "qubit.clusterAgent.fullname" . }}
+  labels:
+    app: {{ include "qubit.clusterAgent.fullname" . }}
+    {{- include "qubit.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "qubit.clusterAgent.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "qubit.clusterAgent.fullname" . }}
+    spec:
+      serviceAccountName: {{ include "qubit.clusterAgent.fullname" . }}
+      containers:
+        - name: cluster-agent
+          image: "{{ .Values.clusterAgent.image.repository }}:{{ .Values.clusterAgent.image.tag }}"
+          imagePullPolicy: {{ .Values.clusterAgent.image.pullPolicy }}
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: CONFIG_PATH
+              value: /app/config.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          resources:
+            {{- toYaml .Values.clusterAgent.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "qubit.clusterAgent.fullname" . }}-config

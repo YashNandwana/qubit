@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qubit.clusterAgent.fullname" . }}-config
+  labels:
+    app: {{ include "qubit.clusterAgent.fullname" . }}
+    {{- include "qubit.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    qubit_core:
+      host: {{ include "qubit.core.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+      grpc_port: {{ .Values.core.grpcPort }}
+    kubernetes:
+      namespace: {{ .Values.clusterAgent.config.namespace | quote }}

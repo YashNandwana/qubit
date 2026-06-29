@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qubit.ebpfLoader.fullname" . }}-config
+  labels:
+    app: {{ include "qubit.ebpfLoader.fullname" . }}
+    {{- include "qubit.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    qubit_core:
+      host: {{ include "qubit.core.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+      grpc_port: {{ .Values.core.grpcPort }}
+    perf_array_name: {{ .Values.ebpfLoader.config.perfArrayName | quote }}
+    ebpf_path: {{ .Values.ebpfLoader.config.ebpfPath | quote }}

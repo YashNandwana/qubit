@@ -1,0 +1,60 @@
+core:
+  image:
+    repository: qubit-core
+    tag: latest
+    pullPolicy: IfNotPresent
+  grpcPort: 50051
+  httpPort: 9000
+  config:
+    ebpfBulkInsertionMaxSize: 100
+    ebpfFlushIntervalSecs: 10
+  resources:
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+
+clusterAgent:
+  image:
+    repository: qubit-cluster-agent
+    tag: latest
+    pullPolicy: IfNotPresent
+  config:
+    # Watch all namespaces by default; set to a specific namespace to restrict.
+    namespace: ""
+  resources:
+    limits:
+      memory: "64Mi"
+      cpu: "100m"
+    requests:
+      memory: "32Mi"
+      cpu: "50m"
+
+ebpfLoader:
+  image:
+    repository: qubit-ebpf
+    tag: latest
+    pullPolicy: IfNotPresent
+  config:
+    interface: "eth0"
+    perfArrayName: "NETWORK_EVENTS"
+    ebpfPath: "/app/ebpf-bytecode"
+  resources:
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+    requests:
+      memory: "64Mi"
+      cpu: "100m"
+
+# ClickHouse connection — must be provisioned separately.
+# For a quick local ClickHouse:
+#   helm install clickhouse oci://registry-1.docker.io/bitnamicharts/clickhouse \
+#     --set auth.password=qubit --set shards=1 --set replicaCount=1 --set zookeeper.enabled=false
+clickhouse:
+  host: ""        # required — e.g. "clickhouse.default.svc.cluster.local"
+  port: 8123
+  username: default
+  password: ""    # required

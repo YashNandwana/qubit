@@ -1,0 +1,13 @@
+Qubit has been deployed.
+
+Components:
+  Core:          {{ include "qubit.core.fullname" . }}
+  Cluster Agent: {{ include "qubit.clusterAgent.fullname" . }}
+  eBPF Loader:   {{ include "qubit.ebpfLoader.fullname" . }} (DaemonSet)
+
+Check status:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/managed-by=Helm
+
+Query the topology:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "qubit.core.fullname" . }} 50051:50051
+  grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology

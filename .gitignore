@@ -11,3 +11,5 @@
 /ui/node_modules
 /ui/dist
 .mcp.json
+/helm/qubit/charts/clickhouse/
+/helm/qubit/charts/*.tgz
