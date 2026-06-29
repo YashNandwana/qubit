@@ -1,0 +1,19 @@
+# Core Kubernetes Image
+# Runtime-only image with pre-built binary (built in Lima VM)
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy pre-built binary (built via workspace: target/ is at repo root)
+COPY target/release/Qubit /app/qubit-core
+
+# Config is mounted via ConfigMap at /app/config.yaml
+ENV RUST_LOG=info
+ENV CONFIG_PATH=/app/config.yaml
+
+CMD ["/app/qubit-core"]

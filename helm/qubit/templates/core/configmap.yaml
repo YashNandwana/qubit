@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qubit.core.fullname" . }}-config
+  labels:
+    app: {{ include "qubit.core.fullname" . }}
+    {{- include "qubit.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    app:
+      http_port: {{ .Values.core.httpPort }}
+      grpc_port: {{ .Values.core.grpcPort }}
+      ebpf_bulk_insertion_max_size: {{ .Values.core.config.ebpfBulkInsertionMaxSize }}
+      ebpf_flush_interval_secs: {{ .Values.core.config.ebpfFlushIntervalSecs }}
+    db:
+      host: {{ include "qubit.clickhouse.host" . }}
+      port: {{ .Values.clickhouse.port }}
+      user: {{ .Values.clickhouse.username }}
+      password: {{ .Values.clickhouse.password | quote }}
+      table:
+        ebpf_network_events: ebpf_network_events
+        k8s_resource_events: k8s_resource_events
+    kubernetes:
+      in_cluster: true
+      namespace: ""
+      leader_election:
+        enabled: false
+        lease_duration: 15s
+        renew_deadline: 10s
+        retry_period: 2s
+    envoy:
+      admin_api: ""
+      refresh_interval_secs: 30

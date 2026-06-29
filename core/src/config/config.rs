@@ -22,6 +22,7 @@ pub struct EnvoyConfig {
 pub struct AppConfig {
     pub http_port: u16,
     pub grpc_port: u16,
+    #[serde(default)]
     pub upstream: String,
     pub ebpf_bulk_insertion_max_size: u16,
     pub ebpf_flush_interval_secs: u64,

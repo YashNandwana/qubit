@@ -36,6 +36,7 @@ DURATION ?= 60
 KIND_CLUSTER ?= qubit-test
 KIND_IMAGE ?= qubit-ebpf:latest
 CLUSTER_AGENT_IMAGE ?= qubit-cluster-agent:latest
+CORE_IMAGE ?= qubit-core:latest
 
 # eBPF bytecode output path (built on macOS via Docker)
 EBPF_BYTECODE = $(PROJECT_DIR)/ebpf/target/bpfel-unknown-none/release/ebpf
@@ -407,6 +408,31 @@ vm-kind-load-cluster-agent:
 .PHONY: vm-cluster-agent
 vm-cluster-agent: vm-build-cluster-agent vm-docker-build-cluster-agent vm-kind-load-cluster-agent
 	@echo "Cluster-agent ready for deployment."
+
+# ------------------------------
+# Core (Build & Deploy)
+# ------------------------------
+.PHONY: vm-build-core
+vm-build-core:
+	@echo "Building core in Lima VM..."
+	@$(LIMA_CMD) bash -c "export PATH=\$$HOME/.cargo/bin:\$$PATH && cd $(PROJECT_DIR) && cargo build --release -p Qubit"
+	@echo "Core built."
+
+.PHONY: vm-docker-build-core
+vm-docker-build-core:
+	@echo "Building core K8s image in Lima VM..."
+	@$(LIMA_CMD) bash -c "cd $(PROJECT_DIR) && docker build -t $(CORE_IMAGE) -f ebpf/hack/Dockerfile.core ."
+	@echo "Docker image built: $(CORE_IMAGE)"
+
+.PHONY: vm-kind-load-core
+vm-kind-load-core:
+	@echo "Loading core image into Kind cluster..."
+	@$(LIMA_CMD) bash -c "kind load docker-image $(CORE_IMAGE) --name $(KIND_CLUSTER)"
+	@echo "Core image loaded into Kind cluster"
+
+.PHONY: vm-core
+vm-core: vm-build-core vm-docker-build-core vm-kind-load-core
+	@echo "Core ready for deployment."
 
 # ------------------------------
 # Kubernetes Deployment

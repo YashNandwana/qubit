@@ -155,10 +155,18 @@ qubit/
 │       ├── ch_client.rs         # Queries ClickHouse for raw events
 │       └── config.rs
 │
+├── helm/qubit/                  # Helm chart for Kubernetes deployment
+│   ├── Chart.yaml
+│   ├── values.yaml              # All tunable defaults
+│   └── templates/
+│       ├── core/                # Deployment + Service + ConfigMap
+│       ├── cluster-agent/       # Deployment + RBAC + ServiceAccount
+│       └── ebpf-loader/         # DaemonSet + ConfigMap
+│
 └── ebpf/hack/                   # K8s manifests and dev tooling
     └── k8s/
-        ├── ebpf-daemonset.yaml  # eBPF loader DaemonSet
-        ├── cluster-agent.yaml   # Cluster Agent Deployment + RBAC
+        ├── ebpf-daemonset.yaml  # eBPF loader DaemonSet (dev only — hardcoded IPs)
+        ├── cluster-agent.yaml   # Cluster Agent Deployment + RBAC (dev only)
         ├── envoy-proxy.yaml     # Envoy proxy + ConfigMap (static config)
         └── test-pods.yaml       # Test services (service-a → service-b via Envoy)
 ```
@@ -171,6 +179,7 @@ qubit/
 - **Lima** — for local K8s development on macOS (`brew install lima`)
 - **Kind** — Kubernetes in Docker (installed inside Lima VM)
 - **Docker** — for ClickHouse and eBPF bytecode compilation
+- **Helm** — for Kubernetes deployment (`brew install helm`)
 - **grpcurl** — for testing gRPC services (`brew install grpcurl`)
 
 ## Quick Start
@@ -237,6 +246,63 @@ grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
 ```
 
 Expected: `service-a → service-b` (not `service-a → envoy-proxy`). The Envoy route resolution maps the `envoy-proxy.default.svc` Host header back to `service-b`.
+
+## Deploy with Helm
+
+The Helm chart deploys all Qubit components fully in-cluster. ClickHouse is installed separately so it can be managed independently of Qubit upgrades.
+
+### 1. Install ClickHouse
+
+```bash
+helm install clickhouse oci://registry-1.docker.io/bitnamicharts/clickhouse \
+  --set auth.password=yourpassword \
+  --set shards=1 \
+  --set replicaCount=1 \
+  --set zookeeper.enabled=false
+```
+
+Or use any existing ClickHouse instance — cloud-hosted or self-managed.
+
+### 2. Install Qubit
+
+```bash
+helm install qubit ./helm/qubit \
+  --set clickhouse.host=clickhouse.default.svc.cluster.local \
+  --set clickhouse.password=yourpassword
+```
+
+### 3. Verify
+
+```bash
+kubectl get pods
+# qubit-core, qubit-cluster-agent, qubit-ebpf-loader should all reach Running
+
+kubectl port-forward svc/qubit-core 50051:50051
+grpcurl -plaintext localhost:50051 qubit.QubitQuery/GetTopology
+```
+
+Topology populates within ~30 seconds of the first HTTP traffic flowing between services.
+
+### Key values
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `clickhouse.host` | `""` (required) | ClickHouse service hostname |
+| `clickhouse.port` | `8123` | ClickHouse HTTP port |
+| `clickhouse.username` | `default` | ClickHouse username |
+| `clickhouse.password` | `""` (required) | ClickHouse password |
+| `ebpfLoader.config.interface` | `eth0` | Network interface to attach eBPF filter to |
+| `core.config.ebpfFlushIntervalSecs` | `10` | How often to flush events to ClickHouse |
+
+### Upgrade
+
+```bash
+helm upgrade qubit ./helm/qubit \
+  --set clickhouse.host=clickhouse.default.svc.cluster.local \
+  --set clickhouse.password=yourpassword
+```
+
+> **Note:** The eBPF DaemonSet uses `hostNetwork: true` (required to capture all node traffic) with `dnsPolicy: ClusterFirstWithHostNet` so cluster-internal service names resolve correctly. If you see DNS errors in eBPF loader logs, verify this dnsPolicy is in effect.
 
 ## Local Dev Architecture
 
